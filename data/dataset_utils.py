@@ -4,7 +4,7 @@ from datasets import Dataset, concatenate_datasets, load_dataset
 
 def load_stage_dataset(phase_path, tokenizer, seq_len):
     dss = []
-    data_dir = f"{phase_path}/data"
+    data_dir = f"../{phase_path}/data"
 
     if os.path.exists(data_dir):
         for shard in os.listdir(data_dir):

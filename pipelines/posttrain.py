@@ -22,7 +22,7 @@ def run_stage4_sft(model_type, tokenizer, base_dir):
 
     dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
     model = ModelClass(config).to(dtype)
-    ds = prepare_sft_dataset("Dolci-Think-SFT-32B", tokenizer, seq_len=2048)
+    ds = prepare_sft_dataset("../Dolci-Think-SFT-32B", tokenizer, seq_len=2048)
 
     args = TrainingArguments(
         output_dir=stage4_dir, max_steps=10, num_train_epochs=2, per_device_train_batch_size=1,
@@ -59,7 +59,7 @@ def run_stage5_dpo(model_type, tokenizer, base_dir, stage4_model_path):
     ref_model.eval()
     for param in ref_model.parameters(): param.requires_grad = False
 
-    ds = load_dataset("Dolci-Think-DPO-32B", split="train").map(format_dpo_dataset, desc="Formatting DPO dataset")
+    ds = load_dataset("../Dolci-Think-DPO-32B", split="train").map(format_dpo_dataset, desc="Formatting DPO dataset")
 
     args = DPOConfig(
         output_dir=stage5_dir, max_steps=10, num_train_epochs=1, per_device_train_batch_size=1,

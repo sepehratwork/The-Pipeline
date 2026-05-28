@@ -24,8 +24,8 @@ def main():
             "{% if add_generation_prompt %}{{ '<|assistant|>\n' }}{% endif %}"
         )
 
-    pretrain_dir = "ModelsCheckpoints/OLMo3/Pre-Training"
-    posttrain_dir = "ModelsCheckpoints/OLMo3/Post-Training"
+    pretrain_dir = "../ModelsCheckpoints/OLMo3/Pre-Training"
+    posttrain_dir = "../ModelsCheckpoints/OLMo3/Post-Training"
 
     # Pre-training Stages
     stage1_model = run_stage1_pretraining(model_type, tokenizer, pretrain_dir)
