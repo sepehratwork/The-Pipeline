@@ -7,9 +7,9 @@ from utils import GradientMetricsCallback, get_latest_checkpoint
 def _run_pretrain_stage(stage_name, model_type, tokenizer, dataset_path, seq_len, output_dir, config_kwargs, train_args_kwargs, resume_model_path=None):
     print(f"=== Starting {stage_name} ===")
     os.makedirs(output_dir, exist_ok=True)
-    
+
     ConfigClass, ModelClass = get_model_classes(model_type)
-    
+
     if resume_model_path:
         config = ConfigClass.from_pretrained(resume_model_path)
         for k, v in config_kwargs.items():
