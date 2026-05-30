@@ -33,7 +33,7 @@ def main():
     stage3_model = run_stage3_long_context(model_type, tokenizer, pretrain_dir, stage2_model)
 
     # Post-training Stages
-    stage4_model = run_stage4_sft(model_type, tokenizer, posttrain_dir)
+    stage4_model = run_stage4_sft(model_type, tokenizer, posttrain_dir, stage3_model)
     stage5_model = run_stage5_dpo(model_type, tokenizer, posttrain_dir, stage4_model)
     
     # RLVR Stage (GRPO)

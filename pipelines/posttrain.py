@@ -8,17 +8,13 @@ from models import get_model_classes
 from data import prepare_sft_dataset, format_dpo_dataset
 from utils import GradientMetricsCallback, get_latest_checkpoint
 
-def run_stage4_sft(model_type, tokenizer, base_dir):
+def run_stage4_sft(model_type, tokenizer, base_dir, stage3_model_path):
     print("=== Starting Stage 4: Supervised Finetuning (SFT) ===")
     stage4_dir = os.path.join(base_dir, "Stage4")
     os.makedirs(stage4_dir, exist_ok=True)
 
     ConfigClass, ModelClass = get_model_classes(model_type)
-    config = ConfigClass(
-        vocab_size=len(tokenizer), hidden_size=1024, intermediate_size=4096,
-        num_hidden_layers=20, num_attention_heads=16, num_key_value_heads=4,
-        max_position_embeddings=2048, use_yarn=False
-    )
+    config = ConfigClass.from_pretrained(stage3_model_path)
 
     dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
     model = ModelClass(config).to(dtype)
