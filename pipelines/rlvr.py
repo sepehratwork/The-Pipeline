@@ -45,7 +45,8 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path, rl_algo_
     rl_algo = get_rl_algorithm(rl_algo_name)
 
     max_steps, group_size, gradient_accumulation_steps = 1400, 8, 4
-    max_prompt_length, max_completion_length = 2048, 32768
+    # max_prompt_length, max_completion_length = 2048, 32768
+    max_prompt_length, max_completion_length = 1024, 2048
 
     steps_list, variances, entropies, means, losses, flops_list = [], [], [], [], [], []
     total_flops = 0
