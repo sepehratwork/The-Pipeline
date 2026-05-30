@@ -49,7 +49,8 @@ def _run_pretrain_stage(stage_name, model_type, tokenizer, dataset_path, seq_len
 
 def run_stage1_pretraining(model_type, tokenizer, base_dir):
     return _run_pretrain_stage(
-        "Stage 1: Pretraining", model_type, tokenizer, "dolma3_mix-150B-1025", 8192,
+        # "Stage 1: Pretraining", model_type, tokenizer, "dolma3_mix-150B-1025", 8192,
+        "Stage 1: Pretraining", model_type, tokenizer, "dolma3_mix-150B-1025", 1024,
         os.path.join(base_dir, "Stage1"),
         {"max_position_embeddings": 8192, "use_yarn": False},
         {"max_steps": 10000, "per_device_train_batch_size": 1, "learning_rate": 3.0e-4, "lr_scheduler_type": "cosine", "warmup_steps": 2000, "logging_steps": 1, "save_steps": 500}
@@ -58,7 +59,8 @@ def run_stage1_pretraining(model_type, tokenizer, base_dir):
 
 def run_stage2_midtraining(model_type, tokenizer, base_dir, stage1_model_path):
     return _run_pretrain_stage(
-        "Stage 2: Midtraining", model_type, tokenizer, "dolma3_dolmino_mix-100B-1125", 8192,
+        # "Stage 2: Midtraining", model_type, tokenizer, "dolma3_dolmino_mix-100B-1125", 8192,
+        "Stage 2: Midtraining", model_type, tokenizer, "dolma3_dolmino_mix-100B-1125", 1024,
         os.path.join(base_dir, "Stage2"),
         {"max_position_embeddings": 8192, "use_yarn": False},
         {"max_steps": 5000, "per_device_train_batch_size": 1, "learning_rate": 2.074e-4, "lr_scheduler_type": "linear", "warmup_steps": 0, "logging_steps": 1, "save_steps": 500},
@@ -68,7 +70,8 @@ def run_stage2_midtraining(model_type, tokenizer, base_dir, stage1_model_path):
 
 def run_stage3_long_context(model_type, tokenizer, base_dir, stage2_model_path):
     return _run_pretrain_stage(
-        "Stage 3: Long-context Extension", model_type, tokenizer, "dolma3_longmino_mix-100B-1125", 65536,
+        # "Stage 3: Long-context Extension", model_type, tokenizer, "dolma3_longmino_mix-100B-1125", 65536,
+        "Stage 3: Long-context Extension", model_type, tokenizer, "dolma3_longmino_mix-100B-1125", 2048,
         os.path.join(base_dir, "Stage3"),
         {"max_position_embeddings": 65536, "use_yarn": True},
         {"max_steps": 2000, "per_device_train_batch_size": 1, "learning_rate": 2.074e-4, "lr_scheduler_type": "linear", "warmup_steps": 200, "logging_steps": 1, "save_steps": 500},
