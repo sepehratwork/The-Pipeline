@@ -5,14 +5,16 @@ import torch.nn.functional as F
 from transformers import PretrainedConfig, PreTrainedModel, GenerationMixin
 from transformers.modeling_outputs import CausalLMOutputWithPast
 
+
 class OLMo3Config(PretrainedConfig):
     model_type = "olmo3"
     def __init__(
         self, vocab_size=100278, hidden_size=1024, intermediate_size=2752,
         num_hidden_layers=24, num_attention_heads=16, num_key_value_heads=4,
-        max_position_embeddings=2048, sliding_window=1024, rope_theta=500000.0,
-        z_loss_weight=1e-5, use_yarn=False, original_max_position_embeddings=2048, **kwargs
+        max_position_embeddings=8192, sliding_window=4096, rope_theta=500000.0,
+        z_loss_weight=1e-5, use_yarn=False, original_max_position_embeddings=8192, **kwargs
     ):
+        # Hyperparameters are strictly set here to yield a ~500M parameter model
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
         self.intermediate_size = intermediate_size
@@ -27,6 +29,7 @@ class OLMo3Config(PretrainedConfig):
         self.original_max_position_embeddings = original_max_position_embeddings
         super().__init__(**kwargs)
 
+
 class OLMo3RMSNorm(nn.Module):
     def __init__(self, hidden_size, eps=1e-6):
         super().__init__()
@@ -39,6 +42,7 @@ class OLMo3RMSNorm(nn.Module):
         variance = hidden_states.pow(2).mean(-1, keepdim=True)
         hidden_states = hidden_states * torch.rsqrt(variance + self.eps)
         return self.weight * hidden_states.to(input_dtype)
+
 
 class OLMo3RotaryEmbedding(nn.Module):
     def __init__(self, dim, max_position_embeddings=8192, base=500000.0, use_yarn=False, original_max=8192):
@@ -66,10 +70,12 @@ class OLMo3RotaryEmbedding(nn.Module):
         sin = emb.sin() * self.mscale
         return cos.to(x.dtype), sin.to(x.dtype)
 
+
 def rotate_half(x):
     x1 = x[..., : x.shape[-1] // 2]
     x2 = x[..., x.shape[-1] // 2 :]
     return torch.cat((-x2, x1), dim=-1)
+
 
 def apply_rotary_pos_emb(q, k, cos, sin, position_ids):
     cos = cos[position_ids].unsqueeze(1)
@@ -77,6 +83,7 @@ def apply_rotary_pos_emb(q, k, cos, sin, position_ids):
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
     return q_embed, k_embed
+
 
 class OLMo3Attention(nn.Module):
     def __init__(self, config: OLMo3Config, layer_idx: int):
@@ -144,13 +151,13 @@ class OLMo3Attention(nn.Module):
             if attention_mask is not None:
                 causal_mask &= attention_mask.unsqueeze(1).unsqueeze(2).bool()
 
-            # FIX: Convert boolean mask to an additive float mask to prevent NaNs in SDPA during decoding
             float_mask = torch.zeros_like(causal_mask, dtype=q.dtype)
             float_mask.masked_fill_(~causal_mask, torch.finfo(q.dtype).min)
             attn_output = F.scaled_dot_product_attention(q, k, v, attn_mask=float_mask)
 
         attn_output = attn_output.transpose(1, 2).contiguous().view(bsz, q_len, self.hidden_size)
         return self.o_proj(attn_output), past_key_value
+
 
 class OLMo3MLP(nn.Module):
     def __init__(self, config: OLMo3Config):
@@ -162,6 +169,7 @@ class OLMo3MLP(nn.Module):
 
     def forward(self, x):
         return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
+
 
 class OLMo3Block(nn.Module):
     def __init__(self, config: OLMo3Config, layer_idx: int):
@@ -182,6 +190,7 @@ class OLMo3Block(nn.Module):
         hidden_states = self.mlp(self.post_attention_layernorm(hidden_states))
         return residual + hidden_states, present_kv
 
+
 class OLMo3PreTrainedModel(PreTrainedModel):
     config_class = OLMo3Config
     base_model_prefix = "model"
@@ -198,6 +207,7 @@ class OLMo3PreTrainedModel(PreTrainedModel):
         elif isinstance(module, nn.Embedding):
             module.weight.data.normal_(mean=0.0, std=std)
             if module.padding_idx is not None: module.weight.data[module.padding_idx].zero_()
+
 
 class OLMo3Model(OLMo3PreTrainedModel):
     def __init__(self, config: OLMo3Config):
@@ -231,6 +241,7 @@ class OLMo3Model(OLMo3PreTrainedModel):
             if use_cache: next_decoder_cache.append(present_kv)
 
         return self.norm(hidden_states), next_decoder_cache
+
 
 class OLMo3ForCausalLM(OLMo3PreTrainedModel, GenerationMixin):
     def __init__(self, config: OLMo3Config):

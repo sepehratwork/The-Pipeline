@@ -8,7 +8,7 @@ class GradientMetricsCallback(TrainerCallback):
     def __init__(self, log_file, plot_dir):
         self.log_file = log_file
         self.plot_dir = plot_dir
-        self.steps, self.variances, self.entropies, self.losses, self.flops = [], [], [], [], []
+        self.steps, self.variances, self.entropies, self.means, self.losses, self.flops = [], [], [], [], [], []
         os.makedirs(self.plot_dir, exist_ok=True)
 
         if os.path.exists(self.log_file):
@@ -19,6 +19,7 @@ class GradientMetricsCallback(TrainerCallback):
                         self.steps.append(data['step'])
                         self.variances.append(data['variance'])
                         self.entropies.append(data['entropy'])
+                        self.means.append(data['mean'])
                         self.losses.append(data['loss'])
                         self.flops.append(data.get('flops', 0))
 
@@ -44,7 +45,7 @@ class GradientMetricsCallback(TrainerCallback):
                     prob = prob[prob > 0]
                     entropy -= (prob * torch.log(prob)).sum().item()
         else:
-            var, entropy = 0.0, 0.0
+            mean, var, entropy = 0.0, 0.0, 0.0
 
         loss = state.log_history[-1].get('loss', 0.0) if len(state.log_history) > 0 else 0.0
         current_flops = state.total_flos
@@ -53,19 +54,20 @@ class GradientMetricsCallback(TrainerCallback):
         self.steps.append(step)
         self.variances.append(var)
         self.entropies.append(entropy)
+        self.means.append(mean)
         self.losses.append(loss)
         self.flops.append(current_flops)
 
         with open(self.log_file, 'a') as f:
-            f.write(json.dumps({'step': step, 'variance': var, 'entropy': entropy, 'loss': loss, 'flops': current_flops}) + '\n')
+            f.write(json.dumps({'step': step, 'variance': var, 'entropy': entropy, 'mean': mean, 'loss': loss, 'flops': current_flops}) + '\n')
 
-        plt.figure(figsize=(20, 5))
+        plt.figure(figsize=(25, 5))
         for i, (data, title, color) in enumerate(zip(
-            [self.variances, self.entropies, self.losses, self.flops],
-            ['Gradient Variance', 'Gradient Entropy', 'Training Loss', 'Cumulative FLOPs'],
-            ['blue', 'green', 'red', 'purple']
+            [self.variances, self.entropies, self.means, self.losses, self.flops],
+            ['Gradient Variance', 'Gradient Entropy', 'Gradient Mean', 'Training Loss', 'Cumulative FLOPs'],
+            ['blue', 'green', 'orange', 'red', 'purple']
         )):
-            plt.subplot(1, 4, i+1)
+            plt.subplot(1, 5, i+1)
             plt.plot(self.steps, data, color=color)
             plt.title(title)
             plt.xlabel('Steps')

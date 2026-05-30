@@ -10,7 +10,7 @@ def get_latest_checkpoint(output_dir):
     return None
 
 def get_resume_state(log_file):
-    last_step = 0
+    last_step = -1
     if os.path.exists(log_file):
         with open(log_file, 'r') as f:
             for line in f:

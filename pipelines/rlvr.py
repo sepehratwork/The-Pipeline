@@ -6,7 +6,8 @@ import matplotlib.pyplot as plt
 from datasets import load_dataset
 from models import get_model_classes
 from rl_algorithms import get_rl_algorithm
-from utils import generate_completions, get_resume_state
+from utils import generate_completions, get_resume_state, get_latest_checkpoint
+
 
 def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path, rl_algo_name="grpo"):
     print(f"=== Starting Stage 6: RLVR with {rl_algo_name.upper()} ===")
@@ -17,34 +18,36 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path, rl_algo_
     ds = load_dataset("../Dolci-Think-RL-32B", split="train")
     ConfigClass, ModelClass = get_model_classes(model_type)
     
-    config = ConfigClass(
-        vocab_size=len(tokenizer), hidden_size=1024, intermediate_size=2752,
-        num_hidden_layers=24, num_attention_heads=16, num_key_value_heads=8,
-        max_position_embeddings=4096, use_yarn=True, original_max_position_embeddings=2048
-    )
-
+    config = ConfigClass.from_pretrained(stage5_model_path)
     dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    if os.path.exists(stage5_model_path):
+    ckpt_dir = get_latest_checkpoint(stage6_dir)
+    if ckpt_dir:
+        print(f"Resuming RLVR from {ckpt_dir}")
+        model = ModelClass.from_pretrained(ckpt_dir, config=config).to(dtype).to(device)
+        ref_model = ModelClass.from_pretrained(stage5_model_path, config=config).to(dtype).to(device)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=1.0e-6, fused=torch.cuda.is_available())
+        opt_path = os.path.join(ckpt_dir, "optimizer.pt")
+        if os.path.exists(opt_path):
+            optimizer.load_state_dict(torch.load(opt_path))
+        start_step = get_resume_state(log_file) + 1
+    else:
         model = ModelClass.from_pretrained(stage5_model_path, config=config).to(dtype).to(device)
         ref_model = ModelClass.from_pretrained(stage5_model_path, config=config).to(dtype).to(device)
-    else:
-        model = ModelClass(config).to(dtype).to(device)
-        ref_model = ModelClass(config).to(dtype).to(device)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=1.0e-6, fused=torch.cuda.is_available())
+        start_step = 0
 
     model.gradient_checkpointing = True
     ref_model.eval()
     for param in ref_model.parameters(): param.requires_grad = False
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-6, fused=torch.cuda.is_available())
     rl_algo = get_rl_algorithm(rl_algo_name)
 
-    max_steps, group_size, gradient_accumulation_steps = 10, 4, 4
-    max_prompt_length, max_completion_length = 512, 512
-    start_step = get_resume_state(log_file)
+    max_steps, group_size, gradient_accumulation_steps = 1400, 8, 4
+    max_prompt_length, max_completion_length = 2048, 32768
 
-    steps_list, variances, entropies, losses, flops_list = [], [], [], [], []
+    steps_list, variances, entropies, means, losses, flops_list = [], [], [], [], [], []
     total_flops = 0
 
     if os.path.exists(log_file):
@@ -55,6 +58,7 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path, rl_algo_
                     steps_list.append(data['step'])
                     variances.append(data['variance'])
                     entropies.append(data['entropy'])
+                    means.append(data['mean'])
                     losses.append(data['loss'])
                     flops_list.append(data.get('flops', 0))
                     total_flops = data.get('flops', 0)
@@ -108,7 +112,7 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path, rl_algo_
         loss = rl_algo.compute_loss(policy_token_logprobs, ref_token_logprobs, advantages, comp_mask) / gradient_accumulation_steps
         loss.backward()
         
-        loss_val = loss.item() * gradient_accumulation_steps # Save for logging
+        loss_val = loss.item() * gradient_accumulation_steps
         
         N, P = full_ids.size(1) * group_size, sum(p.numel() for p in model.parameters())
         total_flops += 8 * N * P + (2 * max_completion_length * group_size * P)
@@ -139,7 +143,7 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path, rl_algo_
                         prob = prob[prob > 0]
                         entropy -= (prob * torch.log(prob)).sum().item()
             else:
-                var, entropy = 0.0, 0.0
+                mean, var, entropy = 0.0, 0.0, 0.0
 
             optimizer.step()
             optimizer.zero_grad()
@@ -147,19 +151,20 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path, rl_algo_
             steps_list.append(step)
             variances.append(var)
             entropies.append(entropy)
+            means.append(mean)
             losses.append(loss_val)
             flops_list.append(total_flops)
 
             with open(log_file, 'a') as f:
-                f.write(json.dumps({'step': step, 'variance': var, 'entropy': entropy, 'loss': loss_val, 'flops': total_flops}) + '\n')
+                f.write(json.dumps({'step': step, 'variance': var, 'entropy': entropy, 'mean': mean, 'loss': loss_val, 'flops': total_flops}) + '\n')
 
-            plt.figure(figsize=(20, 5))
+            plt.figure(figsize=(25, 5))
             for i, (data, title, color) in enumerate(zip(
-                [variances, entropies, losses, flops_list],
-                ['Gradient Variance', 'Gradient Entropy', 'Training Loss', 'Cumulative FLOPs'],
-                ['blue', 'green', 'red', 'purple']
+                [variances, entropies, means, losses, flops_list],
+                ['Gradient Variance', 'Gradient Entropy', 'Gradient Mean', 'Training Loss', 'Cumulative FLOPs'],
+                ['blue', 'green', 'orange', 'red', 'purple']
             )):
-                plt.subplot(1, 4, i+1)
+                plt.subplot(1, 5, i+1)
                 plt.plot(steps_list, data, color=color)
                 plt.title(title)
                 plt.xlabel('Steps')
@@ -167,7 +172,11 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path, rl_algo_
             plt.savefig(os.path.join(stage6_dir, 'training_metrics.png'))
             plt.close()
 
-            model.save_pretrained(os.path.join(stage6_dir, f"checkpoint-{step}"))
+            # Save checkpoint and optimizer state for resumption
+            ckpt_path = os.path.join(stage6_dir, f"checkpoint-{step}")
+            os.makedirs(ckpt_path, exist_ok=True)
+            model.save_pretrained(ckpt_path)
+            torch.save(optimizer.state_dict(), os.path.join(ckpt_path, "optimizer.pt"))
 
     model.save_pretrained(os.path.join(stage6_dir, "final_model"))
     print("=== Stage 6 Completed Successfully ===")
