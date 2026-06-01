@@ -29,6 +29,7 @@ def main():
 
     # Pre-training Stages
     stage1_model = run_stage1_pretraining(model_type, tokenizer, pretrain_dir)
+    print(stage1_model)
     stage2_model = run_stage2_midtraining(model_type, tokenizer, pretrain_dir, stage1_model)
     stage3_model = run_stage3_long_context(model_type, tokenizer, pretrain_dir, stage2_model)
 
