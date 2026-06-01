@@ -8,7 +8,7 @@ from utils import GradientMetricsCallback, get_latest_checkpoint
 
 
 def _run_pretrain_stage(stage_name, model_type, tokenizer, dataset_path, seq_len, output_dir, config_kwargs, train_args_kwargs, resume_model_path=None):
-    if os.path.exists(os.path.join(output_dir, "final_model", "model.safetensors")):
+    if not os.path.exists(os.path.join(output_dir, "final_model", "model.safetensors")):
         print(f"=== Starting {stage_name} ===")
         os.makedirs(output_dir, exist_ok=True)
 
