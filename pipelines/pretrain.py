@@ -8,42 +8,43 @@ from utils import GradientMetricsCallback, get_latest_checkpoint
 
 
 def _run_pretrain_stage(stage_name, model_type, tokenizer, dataset_path, seq_len, output_dir, config_kwargs, train_args_kwargs, resume_model_path=None):
-    print(f"=== Starting {stage_name} ===")
-    os.makedirs(output_dir, exist_ok=True)
+    if os.path.exists(os.path.join(output_dir, "final_model", "model.safetensors")):
+        print(f"=== Starting {stage_name} ===")
+        os.makedirs(output_dir, exist_ok=True)
 
-    ConfigClass, ModelClass = get_model_classes(model_type)
+        ConfigClass, ModelClass = get_model_classes(model_type)
 
-    if resume_model_path:
-        config = ConfigClass.from_pretrained(resume_model_path)
-        for k, v in config_kwargs.items():
-            setattr(config, k, v)
-        model = ModelClass.from_pretrained(resume_model_path, config=config, ignore_mismatched_sizes=True)
-    else:
-        config = ConfigClass(vocab_size=len(tokenizer), **config_kwargs)
-        model = ModelClass(config)
+        if resume_model_path:
+            config = ConfigClass.from_pretrained(resume_model_path)
+            for k, v in config_kwargs.items():
+                setattr(config, k, v)
+            model = ModelClass.from_pretrained(resume_model_path, config=config, ignore_mismatched_sizes=True)
+        else:
+            config = ConfigClass(vocab_size=len(tokenizer), **config_kwargs)
+            model = ModelClass(config)
 
-    ds = load_stage_dataset(dataset_path, tokenizer, seq_len=seq_len)
+        ds = load_stage_dataset(dataset_path, tokenizer, seq_len=seq_len)
 
-    args = TrainingArguments(
-        output_dir=output_dir,
-        report_to="none",
-        fp16=not torch.cuda.is_bf16_supported(),
-        bf16=torch.cuda.is_bf16_supported(),
-        gradient_checkpointing=True,
-        optim="adamw_torch_fused",
-        **train_args_kwargs
-    )
+        args = TrainingArguments(
+            output_dir=output_dir,
+            report_to="none",
+            fp16=not torch.cuda.is_bf16_supported(),
+            bf16=torch.cuda.is_bf16_supported(),
+            gradient_checkpointing=True,
+            optim="adamw_torch_fused",
+            **train_args_kwargs
+        )
 
-    trainer = Trainer(
-        model=model,
-        args=args,
-        train_dataset=ds,
-        callbacks=[GradientMetricsCallback(log_file=os.path.join(output_dir, "training_log.jsonl"), plot_dir=output_dir)]
-    )
+        trainer = Trainer(
+            model=model,
+            args=args,
+            train_dataset=ds,
+            callbacks=[GradientMetricsCallback(log_file=os.path.join(output_dir, "training_log.jsonl"), plot_dir=output_dir)]
+        )
 
-    ckpt = get_latest_checkpoint(output_dir)
-    trainer.train(resume_from_checkpoint=ckpt)
-    model.save_pretrained(os.path.join(output_dir, "final_model"))
+        ckpt = get_latest_checkpoint(output_dir)
+        trainer.train(resume_from_checkpoint=ckpt)
+        model.save_pretrained(os.path.join(output_dir, "final_model"))
     return os.path.join(output_dir, "final_model")
 
 
