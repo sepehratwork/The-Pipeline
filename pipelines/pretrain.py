@@ -11,9 +11,7 @@ def _run_pretrain_stage(stage_name, model_type, tokenizer, dataset_path, seq_len
     if not os.path.exists(os.path.join(output_dir, "final_model", "model.safetensors")):
         print(f"=== Starting {stage_name} ===")
         os.makedirs(output_dir, exist_ok=True)
-
         ConfigClass, ModelClass = get_model_classes(model_type)
-
         if resume_model_path:
             config = ConfigClass.from_pretrained(resume_model_path)
             for k, v in config_kwargs.items():
@@ -22,9 +20,8 @@ def _run_pretrain_stage(stage_name, model_type, tokenizer, dataset_path, seq_len
         else:
             config = ConfigClass(vocab_size=len(tokenizer), **config_kwargs)
             model = ModelClass(config)
-
         ds = load_stage_dataset(dataset_path, tokenizer, seq_len=seq_len)
-
+        train_args_kwargs["save_total_limit"] = 1
         args = TrainingArguments(
             output_dir=output_dir,
             report_to="none",
@@ -34,14 +31,12 @@ def _run_pretrain_stage(stage_name, model_type, tokenizer, dataset_path, seq_len
             optim="adamw_torch_fused",
             **train_args_kwargs
         )
-
         trainer = Trainer(
             model=model,
             args=args,
             train_dataset=ds,
             callbacks=[GradientMetricsCallback(log_file=os.path.join(output_dir, "training_log.jsonl"), plot_dir=output_dir)]
         )
-
         ckpt = get_latest_checkpoint(output_dir)
         trainer.train(resume_from_checkpoint=ckpt)
         model.save_pretrained(os.path.join(output_dir, "final_model"))
