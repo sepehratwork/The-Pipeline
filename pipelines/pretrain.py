@@ -21,7 +21,7 @@ def _run_pretrain_stage(stage_name, model_type, tokenizer, dataset_path, seq_len
             config = ConfigClass(vocab_size=len(tokenizer), **config_kwargs)
             model = ModelClass(config)
         ds = load_stage_dataset(dataset_path, tokenizer, seq_len=seq_len)
-        train_args_kwargs["save_total_limit"] = 1
+        train_args_kwargs["save_total_limit"] = 2
         args = TrainingArguments(
             output_dir=output_dir,
             report_to="none",
