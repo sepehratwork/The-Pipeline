@@ -2,7 +2,7 @@ import os
 import pandas as pd
 from datasets import Dataset, concatenate_datasets, load_dataset
 
-def load_stage_dataset(phase_path, tokenizer, seq_len):
+def load_pretrain_phase_dataset(phase_path, tokenizer, seq_len):
     dss = []
     data_dir = f"../{phase_path}/data"
 

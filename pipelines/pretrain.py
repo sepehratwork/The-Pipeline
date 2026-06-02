@@ -3,7 +3,7 @@ import torch
 from transformers import Trainer, TrainingArguments
 
 from models import get_model_classes
-from data import load_stage_dataset
+from data import load_pretrain_phase_dataset
 from utils import GradientMetricsCallback, get_latest_checkpoint
 
 
@@ -20,7 +20,7 @@ def _run_pretrain_stage(stage_name, model_type, tokenizer, dataset_path, seq_len
         else:
             config = ConfigClass(vocab_size=len(tokenizer), **config_kwargs)
             model = ModelClass(config)
-        ds = load_stage_dataset(dataset_path, tokenizer, seq_len=seq_len)
+        ds = load_pretrain_phase_dataset(dataset_path, tokenizer, seq_len=seq_len)
         train_args_kwargs["save_total_limit"] = 2
         args = TrainingArguments(
             output_dir=output_dir,
