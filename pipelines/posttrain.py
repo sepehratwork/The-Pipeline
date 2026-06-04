@@ -27,11 +27,11 @@ def run_stage4_sft(model_type, tokenizer, base_dir, stage3_model_path):
         args = TrainingArguments(
             # num_train_epochs=2,
             max_steps=4,
-            save_total_limit=2,
+            save_total_limit=1,
             output_dir=stage4_dir, per_device_train_batch_size=1,
             gradient_accumulation_steps=4, learning_rate=5.0e-5, logging_steps=1, save_steps=2,
             report_to="none", bf16=torch.cuda.is_bf16_supported(), fp16=not torch.cuda.is_bf16_supported(),
-            gradient_checkpointing=True, optim="adamw_torch_fused"
+            gradient_checkpointing=True, optim="adamw_torch_fused",
         )
 
         trainer = Trainer(
@@ -69,13 +69,13 @@ def run_stage5_dpo(model_type, tokenizer, base_dir, stage4_model_path):
         args = DPOConfig(
             # num_train_epochs=2,
             max_steps=4,
-            save_total_limit=2,
+            save_total_limit=1,
             output_dir=stage5_dir, per_device_train_batch_size=1,
             gradient_accumulation_steps=4, learning_rate=8.0e-8, lr_scheduler_type="linear", warmup_ratio=0.1,
             logging_steps=1, save_steps=2, report_to="none", bf16=torch.cuda.is_bf16_supported(),
             fp16=not torch.cuda.is_bf16_supported(), gradient_checkpointing=True, optim="adamw_torch_fused",
             # beta=5.0, max_length=16384
-            beta=5.0, max_length=2048
+            beta=5.0, max_length=2048,
         )
 
         trainer = DPOTrainer(

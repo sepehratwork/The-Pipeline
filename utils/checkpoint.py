@@ -1,6 +1,7 @@
 import os
 import json
 
+
 def get_latest_checkpoint(output_dir):
     if os.path.exists(output_dir):
         checkpoints = [d for d in os.listdir(output_dir) if d.startswith("checkpoint-")]
@@ -8,6 +9,7 @@ def get_latest_checkpoint(output_dir):
             checkpoints.sort(key=lambda x: int(x.split("-")[1]))
             return os.path.join(output_dir, checkpoints[-1])
     return None
+
 
 def get_resume_state(log_file):
     last_step = -1
