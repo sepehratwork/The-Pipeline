@@ -1,9 +1,11 @@
-import math
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from transformers import PretrainedConfig, PreTrainedModel, GenerationMixin
 from transformers.modeling_outputs import CausalLMOutputWithPast
+
+from .normalization import RMSNorm
+from .mlp import SwiGLUMLP
+from .attention import GroupedQueryAttention
 
 
 class OLMo3Config(PretrainedConfig):
@@ -39,154 +41,13 @@ class OLMo3Config(PretrainedConfig):
         super().__init__(**kwargs)
 
 
-class OLMo3RMSNorm(nn.Module):
-    def __init__(self, hidden_size, eps=1e-6):
-        super().__init__()
-        self.weight = nn.Parameter(torch.ones(hidden_size))
-        self.eps = eps
-
-    def forward(self, hidden_states):
-        input_dtype = hidden_states.dtype
-        hidden_states = hidden_states.to(torch.float32)
-        variance = hidden_states.pow(2).mean(-1, keepdim=True)
-        hidden_states = hidden_states * torch.rsqrt(variance + self.eps)
-        return self.weight * hidden_states.to(input_dtype)
-
-
-class OLMo3RotaryEmbedding(nn.Module):
-    def __init__(self, dim, max_position_embeddings=8192, base=500000.0, use_yarn=False, original_max=8192):
-        super().__init__()
-        self.dim = dim
-        self.base = base
-        self.use_yarn = use_yarn
-        inv_freq = 1.0 / (self.base ** (torch.arange(0, self.dim, 2, dtype=torch.float32) / self.dim))
-
-        if self.use_yarn:
-            scale = max_position_embeddings / original_max
-            mscale = 0.1 * math.log(scale) + 1.0
-            inv_freq = inv_freq / scale
-            self.mscale = mscale
-        else:
-            self.mscale = 1.0
-
-        self.register_buffer("inv_freq", inv_freq, persistent=False)
-
-    def forward(self, x, seq_len):
-        t = torch.arange(seq_len, device=x.device, dtype=self.inv_freq.dtype)
-        freqs = torch.outer(t, self.inv_freq)
-        emb = torch.cat((freqs, freqs), dim=-1)
-        cos = emb.cos() * self.mscale
-        sin = emb.sin() * self.mscale
-        return cos.to(x.dtype), sin.to(x.dtype)
-
-
-def rotate_half(x):
-    x1 = x[..., : x.shape[-1] // 2]
-    x2 = x[..., x.shape[-1] // 2 :]
-    return torch.cat((-x2, x1), dim=-1)
-
-
-def apply_rotary_pos_emb(q, k, cos, sin, position_ids):
-    cos = cos[position_ids].unsqueeze(1)
-    sin = sin[position_ids].unsqueeze(1)
-    q_embed = (q * cos) + (rotate_half(q) * sin)
-    k_embed = (k * cos) + (rotate_half(k) * sin)
-    return q_embed, k_embed
-
-
-class OLMo3Attention(nn.Module):
-    def __init__(self, config: OLMo3Config, layer_idx: int):
-        super().__init__()
-        self.config = config
-        self.layer_idx = layer_idx
-        self.hidden_size = config.hidden_size
-        self.num_heads = config.num_attention_heads
-        self.head_dim = self.hidden_size // self.num_heads
-        self.num_key_value_heads = config.num_key_value_heads
-        self.num_key_value_groups = self.num_heads // self.num_key_value_heads
-
-        self.q_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=False)
-        self.k_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False)
-        self.v_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False)
-        self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=False)
-
-        self.q_norm = OLMo3RMSNorm(self.num_heads * self.head_dim)
-        self.k_norm = OLMo3RMSNorm(self.num_key_value_heads * self.head_dim)
-
-        self.is_full_attention = (layer_idx % 4 == 3) or (layer_idx == config.num_hidden_layers - 1)
-        self.is_swa = not self.is_full_attention
-
-        use_yarn_here = config.use_yarn and self.is_full_attention
-        self.rotary_emb = OLMo3RotaryEmbedding(
-            self.head_dim, max_position_embeddings=config.max_position_embeddings,
-            base=config.rope_theta, use_yarn=use_yarn_here, original_max=config.original_max_position_embeddings
-        )
-
-    def forward(self, hidden_states, attention_mask=None, position_ids=None, past_key_value=None):
-        bsz, q_len, _ = hidden_states.size()
-
-        q = self.q_norm(self.q_proj(hidden_states)).view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
-        k = self.k_norm(self.k_proj(hidden_states)).view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
-        v = self.v_proj(hidden_states).view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
-
-        kv_seq_len = k.shape[-2] + (past_key_value[0].shape[-2] if past_key_value is not None else 0)
-        cos, sin = self.rotary_emb(v, kv_seq_len)
-        q, k = apply_rotary_pos_emb(q, k, cos, sin, position_ids)
-
-        if past_key_value is not None:
-            k = torch.cat([past_key_value[0], k], dim=2)
-            v = torch.cat([past_key_value[1], v], dim=2)
-        past_key_value = (k, v)
-
-        if self.num_key_value_groups > 1:
-            k = k.repeat_interleave(self.num_key_value_groups, dim=1)
-            v = v.repeat_interleave(self.num_key_value_groups, dim=1)
-
-        use_custom_mask = self.is_swa or (attention_mask is not None and not torch.all(attention_mask))
-
-        if not use_custom_mask and q_len == kv_seq_len:
-            attn_output = F.scaled_dot_product_attention(q, k, v, is_causal=True)
-        else:
-            if q_len == kv_seq_len:
-                causal_mask = torch.ones((bsz, 1, q_len, kv_seq_len), device=q.device, dtype=torch.bool).tril_()
-                if self.is_swa: causal_mask.triu_(diagonal=-self.config.sliding_window + 1)
-            else:
-                row_idx = torch.arange(kv_seq_len - q_len, kv_seq_len, device=q.device).unsqueeze(1)
-                col_idx = torch.arange(kv_seq_len, device=q.device).unsqueeze(0)
-                causal_mask = row_idx >= col_idx
-                if self.is_swa: causal_mask &= (row_idx < col_idx + self.config.sliding_window)
-                causal_mask = causal_mask.unsqueeze(0).unsqueeze(0).expand(bsz, 1, q_len, kv_seq_len).clone()
-
-            if attention_mask is not None:
-                causal_mask &= attention_mask.unsqueeze(1).unsqueeze(2).bool()
-
-            float_mask = torch.zeros_like(causal_mask, dtype=q.dtype)
-            float_mask.masked_fill_(~causal_mask, torch.finfo(q.dtype).min)
-            attn_output = F.scaled_dot_product_attention(q, k, v, attn_mask=float_mask)
-
-        attn_output = attn_output.transpose(1, 2).contiguous().view(bsz, q_len, self.hidden_size)
-        return self.o_proj(attn_output), past_key_value
-
-
-class OLMo3MLP(nn.Module):
-    def __init__(self, config: OLMo3Config):
-        super().__init__()
-        self.gate_proj = nn.Linear(config.hidden_size, config.intermediate_size, bias=False)
-        self.up_proj = nn.Linear(config.hidden_size, config.intermediate_size, bias=False)
-        self.down_proj = nn.Linear(config.intermediate_size, config.hidden_size, bias=False)
-        self.act_fn = nn.SiLU()
-
-    def forward(self, x):
-        return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
-
-
 class OLMo3Block(nn.Module):
     def __init__(self, config: OLMo3Config, layer_idx: int):
         super().__init__()
-        self.input_layernorm = OLMo3RMSNorm(config.hidden_size)
-        self.self_attn = OLMo3Attention(config, layer_idx)
-        self.post_attention_layernorm = OLMo3RMSNorm(config.hidden_size)
-        self.mlp = OLMo3MLP(config)
+        self.input_layernorm = RMSNorm(config.hidden_size)
+        self.self_attn = GroupedQueryAttention(config, layer_idx)
+        self.post_attention_layernorm = RMSNorm(config.hidden_size)
+        self.mlp = SwiGLUMLP(config.hidden_size, config.intermediate_size)
 
     def forward(self, hidden_states, attention_mask=None, position_ids=None, past_key_value=None):
         residual = hidden_states
@@ -223,7 +84,7 @@ class OLMo3Model(OLMo3PreTrainedModel):
         super().__init__(config)
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size)
         self.layers = nn.ModuleList([OLMo3Block(config, i) for i in range(config.num_hidden_layers)])
-        self.norm = OLMo3RMSNorm(config.hidden_size)
+        self.norm = RMSNorm(config.hidden_size)
         self.gradient_checkpointing = False
         self.post_init()
 
