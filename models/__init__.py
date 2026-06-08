@@ -1,6 +1,6 @@
 from .olmo3 import OLMo3Config, OLMo3ForCausalLM
 from .normalization import RMSNorm
-from .positional_encoding import RotaryEmbedding, apply_rotary_pos_emb, rotate_half
+from .positional_encoding import RotaryPositionalEmbedding, apply_rotary_pos_emb, rotate_half
 from .mlp import SwiGLUMLP
 from .attention import GroupedQueryAttention
 

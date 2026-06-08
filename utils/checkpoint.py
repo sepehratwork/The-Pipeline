@@ -20,6 +20,7 @@ def get_resume_state(log_file):
                 if line.strip():
                     data = json.loads(line)
                     last_step = data.get('step', last_step)
+            f.close()
     return last_step
 
 

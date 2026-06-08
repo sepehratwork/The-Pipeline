@@ -72,6 +72,7 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path, rl_algo_
                     losses.append(data['loss'])
                     flops_list.append(data.get('flops', 0))
                     total_flops = data.get('flops', 0)
+            f.close()
 
     model.train()
     optimizer.zero_grad()
@@ -167,6 +168,7 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path, rl_algo_
 
             with open(log_file, 'a') as f:
                 f.write(json.dumps({'step': step, 'variance': var, 'entropy': entropy, 'mean': mean, 'loss': loss_val, 'flops': total_flops}) + '\n')
+                f.close()
 
             plt.figure(figsize=(25, 5))
             for i, (data, title, color) in enumerate(zip(

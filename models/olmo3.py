@@ -13,17 +13,18 @@ class OLMo3Config(PretrainedConfig):
     def __init__(
         self, 
         vocab_size=100278, 
-        hidden_size=1024, 
-        intermediate_size=2816,          # Adjusted for SwiGLU optimal ratio (approx 8/3 * hidden_size)
-        num_hidden_layers=8,             # Shallow depth respects "Inverse Depth Scaling" & perfectly fits the 1-in-4 Full Attention rule
-        num_attention_heads=8,           # hidden_size // 128 head_dim = 8
-        num_key_value_heads=4,           # GQA for efficient inference
+        hidden_size=768,                 # Reduced to fit ~100M budget (Wider & Shallower principle)
+        intermediate_size=2048,          # 8/3 * hidden_size (8/3 * 768 = 2048)
+        num_hidden_layers=4,             # Minimum depth to satisfy the "3 SWA, 1 Full Attention" rule
+        num_attention_heads=6,           # hidden_size // 128 head_dim = 6
+        num_key_value_heads=2,           # GQA enabled
         max_position_embeddings=8192,    # OLMo 3 standard context
         sliding_window=4096,             # OLMo 3 standard SWA
         rope_theta=500000.0,
         z_loss_weight=1e-5, 
         use_yarn=False, 
-        original_max_position_embeddings=8192, 
+        original_max_position_embeddings=8192,
+        tie_word_embeddings=True,        # Tied embeddings required to keep total params near 100M
         **kwargs
     ):
         self.vocab_size = vocab_size
@@ -38,7 +39,8 @@ class OLMo3Config(PretrainedConfig):
         self.z_loss_weight = z_loss_weight
         self.use_yarn = use_yarn
         self.original_max_position_embeddings = original_max_position_embeddings
-        super().__init__(**kwargs)
+        self.tie_word_embeddings = tie_word_embeddings
+        super().__init__(tie_word_embeddings=tie_word_embeddings, **kwargs)
 
 
 class OLMo3Block(nn.Module):

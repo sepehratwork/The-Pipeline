@@ -26,7 +26,7 @@ def run_stage4_sft(model_type, tokenizer, base_dir, stage3_model_path):
         ds = prepare_sft_dataset("../Dolci-Think-SFT-32B", tokenizer, seq_len=1024)
 
         args = TrainingArguments(
-            max_steps=4,
+            max_steps=6,
             save_total_limit=2, # Keep only the last 2 checkpoints
             output_dir=stage4_dir, per_device_train_batch_size=1,
             gradient_accumulation_steps=4, learning_rate=5.0e-5, logging_steps=1, save_steps=2,
@@ -79,7 +79,7 @@ def run_stage5_dpo(model_type, tokenizer, base_dir, stage4_model_path):
         ds = load_dataset("../Dolci-Think-DPO-32B", split="train").map(format_dpo_dataset, desc="Formatting DPO dataset")
 
         args = DPOConfig(
-            max_steps=4,
+            max_steps=6,
             save_total_limit=2, # Keep only the last 2 checkpoints
             output_dir=stage5_dir, per_device_train_batch_size=1,
             gradient_accumulation_steps=4, learning_rate=8.0e-8, lr_scheduler_type="linear", warmup_ratio=0.1,

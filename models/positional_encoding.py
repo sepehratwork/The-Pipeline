@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 
 
-class RotaryEmbedding(nn.Module):
+class RotaryPositionalEmbedding(nn.Module):
     """Rotary Positional Embedding (RoPE) with optional YaRN scaling"""
     def __init__(self, dim, max_position_embeddings=8192, base=500000.0, use_yarn=False, original_max=8192):
         super().__init__()

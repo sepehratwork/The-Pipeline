@@ -22,6 +22,7 @@ class GradientMetricsCallback(TrainerCallback):
                         self.means.append(data['mean'])
                         self.losses.append(data['loss'])
                         self.flops.append(data.get('flops', 0))
+                f.close()
 
     def on_step_end(self, args, state, control, model, **kwargs):
         total_elements, sum_grads, sum_sq_grads, sum_abs_grads = 0, 0.0, 0.0, 0.0
@@ -60,6 +61,7 @@ class GradientMetricsCallback(TrainerCallback):
 
         with open(self.log_file, 'a') as f:
             f.write(json.dumps({'step': step, 'variance': var, 'entropy': entropy, 'mean': mean, 'loss': loss, 'flops': current_flops}) + '\n')
+            f.close()
 
         plt.figure(figsize=(25, 5))
         for i, (data, title, color) in enumerate(zip(

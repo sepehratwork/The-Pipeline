@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .normalization import RMSNorm
-from .positional_encoding import RotaryEmbedding, apply_rotary_pos_emb
+from .positional_encoding import RotaryPositionalEmbedding, apply_rotary_pos_emb
 
 
 class GroupedQueryAttention(nn.Module):
@@ -31,7 +31,7 @@ class GroupedQueryAttention(nn.Module):
         self.is_swa = not self.is_full_attention
 
         use_yarn_here = config.use_yarn and self.is_full_attention
-        self.rotary_emb = RotaryEmbedding(
+        self.rotary_emb = RotaryPositionalEmbedding(
             self.head_dim, max_position_embeddings=config.max_position_embeddings,
             base=config.rope_theta, use_yarn=use_yarn_here, original_max=config.original_max_position_embeddings
         )
