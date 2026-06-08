@@ -52,6 +52,7 @@ def _run_pretrain_stage(stage_name, model_type, tokenizer, dataset_path, seq_len
                     raise e
         model.save_pretrained(os.path.join(output_dir, "final_model"))
         clear_all_checkpoints(output_dir)
+    clear_all_checkpoints(output_dir)
     return os.path.join(output_dir, "final_model")
 
 

@@ -40,3 +40,4 @@ def clear_all_checkpoints(output_dir):
         checkpoints = [d for d in os.listdir(output_dir) if d.startswith("checkpoint-")]
         for ckpt in checkpoints:
             shutil.rmtree(os.path.join(output_dir, ckpt), ignore_errors=True)
+            print(f"{ckpt} removed")
