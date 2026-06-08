@@ -1,10 +1,11 @@
 import os
+import shutil
 import torch
 from transformers import Trainer, TrainingArguments
 
 from models import get_model_classes
 from data import load_pretrain_phase_dataset
-from utils import GradientMetricsCallback, get_latest_checkpoint
+from utils import GradientMetricsCallback, get_latest_checkpoint, clear_all_checkpoints
 
 
 def _run_pretrain_stage(stage_name, model_type, tokenizer, dataset_path, seq_len, output_dir, config_kwargs, train_args_kwargs, resume_model_path=None):
@@ -28,7 +29,7 @@ def _run_pretrain_stage(stage_name, model_type, tokenizer, dataset_path, seq_len
             bf16=torch.cuda.is_bf16_supported(),
             gradient_checkpointing=True,
             optim="adamw_torch_fused",
-            save_total_limit=2,
+            save_total_limit=2, # Keep only the last 2 checkpoints
             **train_args_kwargs
         )
         trainer = Trainer(
@@ -37,9 +38,21 @@ def _run_pretrain_stage(stage_name, model_type, tokenizer, dataset_path, seq_len
             train_dataset=ds,
             callbacks=[GradientMetricsCallback(log_file=os.path.join(output_dir, "training_log.jsonl"), plot_dir=output_dir)]
         )
-        ckpt = get_latest_checkpoint(output_dir)
-        trainer.train(resume_from_checkpoint=ckpt)
+        # Robust resumption loop
+        while True:
+            ckpt = get_latest_checkpoint(output_dir)
+            try:
+                trainer.train(resume_from_checkpoint=ckpt)
+                break
+            except Exception as e:
+                if ckpt is not None:
+                    print(f"Checkpoint {ckpt} corrupted or failed to load: {e}. Deleting and trying previous.")
+                    shutil.rmtree(ckpt, ignore_errors=True)
+                else:
+                    raise e
+
         model.save_pretrained(os.path.join(output_dir, "final_model"))
+        clear_all_checkpoints(output_dir)
     return os.path.join(output_dir, "final_model")
 
 

@@ -1,12 +1,13 @@
 import os
 import json
+import shutil
 import torch
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 from datasets import load_dataset
 from models import get_model_classes
 from rl_algorithms import get_rl_algorithm
-from utils import generate_completions, get_resume_state, get_latest_checkpoint
+from utils import generate_completions, get_resume_state, get_latest_checkpoint, cleanup_checkpoints, clear_all_checkpoints
 
 
 def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path, rl_algo_name="grpo"):
@@ -22,22 +23,29 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path, rl_algo_
     dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    ckpt_dir = get_latest_checkpoint(stage6_dir)
-    if ckpt_dir:
-        print(f"Resuming RLVR from {ckpt_dir}")
-        model = ModelClass.from_pretrained(ckpt_dir, config=config).to(dtype).to(device)
-        ref_model = ModelClass.from_pretrained(stage5_model_path, config=config).to(dtype).to(device)
-        optimizer = torch.optim.AdamW(model.parameters(), lr=1.0e-6, fused=torch.cuda.is_available())
-        opt_path = os.path.join(ckpt_dir, "optimizer.pt")
-        if os.path.exists(opt_path):
-            optimizer.load_state_dict(torch.load(opt_path))
-        start_step = get_resume_state(log_file) + 1
-    else:
-        model = ModelClass.from_pretrained(stage5_model_path, config=config).to(dtype).to(device)
-        ref_model = ModelClass.from_pretrained(stage5_model_path, config=config).to(dtype).to(device)
-        optimizer = torch.optim.AdamW(model.parameters(), lr=1.0e-6, fused=torch.cuda.is_available())
-        start_step = 0
+    # Robust resumption loop for custom training loop
+    while True:
+        ckpt_dir = get_latest_checkpoint(stage6_dir)
+        if ckpt_dir:
+            print(f"Attempting to resume RLVR from {ckpt_dir}")
+            try:
+                model = ModelClass.from_pretrained(ckpt_dir, config=config).to(dtype).to(device)
+                optimizer = torch.optim.AdamW(model.parameters(), lr=1.0e-6, fused=torch.cuda.is_available())
+                opt_path = os.path.join(ckpt_dir, "optimizer.pt")
+                if os.path.exists(opt_path):
+                    optimizer.load_state_dict(torch.load(opt_path))
+                start_step = get_resume_state(log_file) + 1
+                break
+            except Exception as e:
+                print(f"Failed to load checkpoint {ckpt_dir}: {e}. Deleting and trying previous.")
+                shutil.rmtree(ckpt_dir, ignore_errors=True)
+        else:
+            model = ModelClass.from_pretrained(stage5_model_path, config=config).to(dtype).to(device)
+            optimizer = torch.optim.AdamW(model.parameters(), lr=1.0e-6, fused=torch.cuda.is_available())
+            start_step = 0
+            break
 
+    ref_model = ModelClass.from_pretrained(stage5_model_path, config=config).to(dtype).to(device)
     model.gradient_checkpointing = True
     ref_model.eval()
     for param in ref_model.parameters(): param.requires_grad = False
@@ -45,8 +53,8 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path, rl_algo_
     rl_algo = get_rl_algorithm(rl_algo_name)
 
     # max_steps, group_size, gradient_accumulation_steps = 1400, 8, 4
-    max_steps, group_size, gradient_accumulation_steps = 4, 2, 4
     # max_prompt_length, max_completion_length = 2048, 32768
+    max_steps, group_size, gradient_accumulation_steps = 4, 2, 4
     max_prompt_length, max_completion_length = 1024, 2048
 
     steps_list, variances, entropies, means, losses, flops_list = [], [], [], [], [], []
@@ -179,6 +187,10 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path, rl_algo_
             os.makedirs(ckpt_path, exist_ok=True)
             model.save_pretrained(ckpt_path)
             torch.save(optimizer.state_dict(), os.path.join(ckpt_path, "optimizer.pt"))
+            
+            # Keep only the last 2 checkpoints
+            cleanup_checkpoints(stage6_dir, keep=2)
 
     model.save_pretrained(os.path.join(stage6_dir, "final_model"))
+    clear_all_checkpoints(stage6_dir) # Remove all checkpoints after phase finishes
     print("=== Stage 6 Completed Successfully ===")
