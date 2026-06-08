@@ -9,12 +9,21 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 class OLMo3Config(PretrainedConfig):
     model_type = "olmo3"
     def __init__(
-        self, vocab_size=100278, hidden_size=1024, intermediate_size=2752,
-        num_hidden_layers=24, num_attention_heads=16, num_key_value_heads=4,
-        max_position_embeddings=8192, sliding_window=4096, rope_theta=500000.0,
-        z_loss_weight=1e-5, use_yarn=False, original_max_position_embeddings=8192, **kwargs
+        self, 
+        vocab_size=100278, 
+        hidden_size=1024, 
+        intermediate_size=2816,          # Adjusted for SwiGLU optimal ratio (approx 8/3 * hidden_size)
+        num_hidden_layers=8,             # Shallow depth respects "Inverse Depth Scaling" & perfectly fits the 1-in-4 Full Attention rule
+        num_attention_heads=8,           # hidden_size // 128 head_dim = 8
+        num_key_value_heads=4,           # GQA for efficient inference
+        max_position_embeddings=8192,    # OLMo 3 standard context
+        sliding_window=4096,             # OLMo 3 standard SWA
+        rope_theta=500000.0,
+        z_loss_weight=1e-5, 
+        use_yarn=False, 
+        original_max_position_embeddings=8192, 
+        **kwargs
     ):
-        # Hyperparameters are strictly set here to yield a ~500M parameter model
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
         self.intermediate_size = intermediate_size

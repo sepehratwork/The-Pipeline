@@ -29,7 +29,7 @@ def _run_pretrain_stage(stage_name, model_type, tokenizer, dataset_path, seq_len
             bf16=torch.cuda.is_bf16_supported(),
             gradient_checkpointing=True,
             optim="adamw_torch_fused",
-            save_total_limit=2, # Keep only the last 2 checkpoints
+            save_total_limit=2,
             **train_args_kwargs
         )
         trainer = Trainer(
@@ -50,7 +50,6 @@ def _run_pretrain_stage(stage_name, model_type, tokenizer, dataset_path, seq_len
                     shutil.rmtree(ckpt, ignore_errors=True)
                 else:
                     raise e
-
         model.save_pretrained(os.path.join(output_dir, "final_model"))
         clear_all_checkpoints(output_dir)
     return os.path.join(output_dir, "final_model")
