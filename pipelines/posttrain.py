@@ -111,4 +111,9 @@ def run_stage5_dpo(model_type, tokenizer, base_dir, stage4_model_path):
                     
         model.save_pretrained(os.path.join(stage5_dir, "final_model"))
         clear_all_checkpoints(stage5_dir) # Remove all checkpoints after phase finishes
+
+        del model, trainer, ds
+        gc.collect()
+        torch.cuda.empty_cache()
+
     return os.path.join(stage5_dir, "final_model")
