@@ -40,6 +40,7 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path, rl_algo_
                 print(f"Failed to load checkpoint {ckpt_dir}: {e}. Deleting and trying previous.")
                 shutil.rmtree(ckpt_dir, ignore_errors=True)
         else:
+            print("No valid checkpoint found. Starting training from the beginning.")
             model = ModelClass.from_pretrained(stage5_model_path, config=config).to(dtype).to(device)
             optimizer = torch.optim.AdamW(model.parameters(), lr=1.0e-6, fused=torch.cuda.is_available())
             start_step = 0
@@ -52,8 +53,6 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path, rl_algo_
 
     rl_algo = get_rl_algorithm(rl_algo_name)
 
-    # max_steps, group_size, gradient_accumulation_steps = 1400, 8, 4
-    # max_prompt_length, max_completion_length = 2048, 32768
     max_steps, group_size, gradient_accumulation_steps = 4, 2, 4
     max_prompt_length, max_completion_length = 1024, 2048
 
