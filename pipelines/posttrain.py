@@ -77,7 +77,6 @@ def run_stage5_dpo(model_type, tokenizer, base_dir, stage4_model_path):
         ref_model.eval()
         for param in ref_model.parameters(): param.requires_grad = False
 
-        # Use the new cached and parallelized preparation function
         ds = prepare_dpo_dataset("../Dolci-Think-DPO-32B")
 
         args = DPOConfig(
