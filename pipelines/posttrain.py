@@ -7,7 +7,7 @@ from trl import DPOTrainer, DPOConfig
 
 from datasets import load_dataset
 from models import get_model_classes
-from data import prepare_sft_dataset, format_dpo_dataset
+from data import prepare_sft_dataset, prepare_dpo_dataset
 from utils import GradientMetricsCallback, get_latest_checkpoint, clear_all_checkpoints
 
 
@@ -77,12 +77,14 @@ def run_stage5_dpo(model_type, tokenizer, base_dir, stage4_model_path):
         ref_model.eval()
         for param in ref_model.parameters(): param.requires_grad = False
 
-        ds = load_dataset("../Dolci-Think-DPO-32B", split="train").map(format_dpo_dataset, desc="Formatting DPO dataset")
+        # Use the new cached and parallelized preparation function
+        ds = prepare_dpo_dataset("../Dolci-Think-DPO-32B")
 
         args = DPOConfig(
             max_steps=6,
-            save_total_limit=2, # Keep only the last 2 checkpoints
+            save_total_limit=2,
             output_dir=stage5_dir, per_device_train_batch_size=1,
+            max_grad_norm=1.0,
             gradient_accumulation_steps=4, learning_rate=8.0e-8, lr_scheduler_type="linear", warmup_ratio=0.1,
             logging_steps=1, save_steps=2, report_to="none", bf16=torch.cuda.is_bf16_supported(),
             fp16=not torch.cuda.is_bf16_supported(), gradient_checkpointing=True, optim="adamw_torch_fused",
@@ -110,7 +112,7 @@ def run_stage5_dpo(model_type, tokenizer, base_dir, stage4_model_path):
                 shutil.rmtree(ckpt, ignore_errors=True)
                     
         model.save_pretrained(os.path.join(stage5_dir, "final_model"))
-        clear_all_checkpoints(stage5_dir) # Remove all checkpoints after phase finishes
+        clear_all_checkpoints(stage5_dir)
 
         del model, trainer, ds
         gc.collect()

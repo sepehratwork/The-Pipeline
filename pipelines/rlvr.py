@@ -4,11 +4,11 @@ import shutil
 import torch
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
-from datasets import load_dataset
+
+from data import prepare_rlvr_dataset
 from models import get_model_classes
 from rl_algorithms import get_rl_algorithm
 from utils import generate_completions, get_resume_state, get_latest_checkpoint, cleanup_checkpoints, clear_all_checkpoints
-
 
 def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path, rl_algo_name="grpo"):
     print(f"=== Starting Stage 6: RLVR with {rl_algo_name.upper()} ===")
@@ -16,9 +16,10 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path, rl_algo_
     os.makedirs(stage6_dir, exist_ok=True)
     log_file = os.path.join(stage6_dir, "training_log.jsonl")
 
-    ds = load_dataset("../Dolci-Think-RL-32B", split="train")
-    ConfigClass, ModelClass = get_model_classes(model_type)
+    # Use the new cached and parallelized preparation function
+    ds = prepare_rlvr_dataset("../Dolci-Think-RL-32B", tokenizer)
     
+    ConfigClass, ModelClass = get_model_classes(model_type)
     config = ConfigClass.from_pretrained(stage5_model_path)
     dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -47,13 +48,14 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path, rl_algo_
             break
 
     ref_model = ModelClass.from_pretrained(stage5_model_path, config=config).to(dtype).to(device)
-    model.gradient_checkpointing = True
+    model.gradient_checkpointing_enable()
+    
     ref_model.eval()
     for param in ref_model.parameters(): param.requires_grad = False
 
     rl_algo = get_rl_algorithm(rl_algo_name)
 
-    max_steps, group_size, gradient_accumulation_steps = 4, 2, 4
+    max_steps, group_size, gradient_accumulation_steps = 6, 2, 4
     max_prompt_length, max_completion_length = 1024, 2048
 
     steps_list, variances, entropies, means, losses, flops_list = [], [], [], [], [], []
@@ -79,21 +81,21 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path, rl_algo_
     for step in range(start_step, max_steps):
         example = ds[step % len(ds)]
         
-        if "prompt" in example: prompt_text = example["prompt"]
-        elif "messages" in example:
-            msgs = example["messages"][:-1] if len(example["messages"]) > 0 and example["messages"][-1]["role"] == "assistant" else example["messages"]
-            prompt_text = tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
-        else: prompt_text = str(example)
-
-        ground_truth = example.get("ground_truth", example.get("answer", ""))
-        if not ground_truth and "messages" in example and example["messages"][-1]["role"] == "assistant":
-            ground_truth = example["messages"][-1]["content"]
+        # Directly use the pre-extracted fields from the cached dataset
+        prompt_text = example["prompt_text"]
+        ground_truth = example["ground_truth"]
 
         inputs = tokenizer(prompt_text, return_tensors="pt", truncation=True, max_length=max_prompt_length).to(device)
         input_ids = inputs.input_ids.repeat(group_size, 1)
         attention_mask = inputs.attention_mask.repeat(group_size, 1)
 
-        completions = generate_completions(model, input_ids, attention_mask, max_completion_length, tokenizer.pad_token_id, tokenizer.eos_token_id)
+        model.eval()
+        model.config.use_cache = True
+        with torch.no_grad():
+            completions = generate_completions(model, input_ids, attention_mask, max_completion_length, tokenizer.pad_token_id, tokenizer.eos_token_id)
+        model.train()
+        model.config.use_cache = False
+        
         prompt_len = input_ids.size(1)
         decoded_completions = tokenizer.batch_decode(completions, skip_special_tokens=True)
 
@@ -132,7 +134,7 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path, rl_algo_
         del full_ids, full_mask, loss
         torch.cuda.empty_cache()
 
-        if (step + 1) % gradient_accumulation_steps == 0:
+        if (step + 1) % gradient_accumulation_steps == 0 or (step + 1) == max_steps:
             total_elements, sum_grads, sum_sq_grads, sum_abs_grads = 0, 0.0, 0.0, 0.0
             for p in model.parameters():
                 if p.grad is not None:
@@ -154,6 +156,8 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path, rl_algo_
                         entropy -= (prob * torch.log(prob)).sum().item()
             else:
                 mean, var, entropy = 0.0, 0.0, 0.0
+
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
             optimizer.step()
             optimizer.zero_grad()
@@ -183,15 +187,13 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path, rl_algo_
             plt.savefig(os.path.join(stage6_dir, 'training_metrics.png'))
             plt.close()
 
-            # Save checkpoint and optimizer state for resumption
             ckpt_path = os.path.join(stage6_dir, f"checkpoint-{step}")
             os.makedirs(ckpt_path, exist_ok=True)
             model.save_pretrained(ckpt_path)
             torch.save(optimizer.state_dict(), os.path.join(ckpt_path, "optimizer.pt"))
             
-            # Keep only the last 2 checkpoints
             cleanup_checkpoints(stage6_dir, keep=2)
 
     model.save_pretrained(os.path.join(stage6_dir, "final_model"))
-    clear_all_checkpoints(stage6_dir) # Remove all checkpoints after phase finishes
+    clear_all_checkpoints(stage6_dir)
     print("=== Stage 6 Completed Successfully ===")

@@ -28,6 +28,7 @@ def _run_pretrain_stage(stage_name, model_type, tokenizer, dataset_path, seq_len
             fp16=not torch.cuda.is_bf16_supported(),
             bf16=torch.cuda.is_bf16_supported(),
             gradient_checkpointing=True,
+            max_grad_norm=1.0,
             optim="adamw_torch_fused",
             save_total_limit=2,
             **train_args_kwargs

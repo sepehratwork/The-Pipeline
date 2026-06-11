@@ -12,7 +12,7 @@ class OLMo3Config(PretrainedConfig):
     model_type = "olmo3"
     def __init__(
         self, 
-        vocab_size=100278, 
+        vocab_size=100278,
         hidden_size=768,                 # Reduced to fit ~100M budget (Wider & Shallower principle)
         intermediate_size=2048,          # 8/3 * hidden_size (8/3 * 768 = 2048)
         num_hidden_layers=4,             # Minimum depth to satisfy the "3 SWA, 1 Full Attention" rule
