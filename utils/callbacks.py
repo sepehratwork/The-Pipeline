@@ -63,10 +63,10 @@ class GradientMetricsCallback(TrainerCallback):
             f.write(json.dumps({'step': step, 'variance': var, 'entropy': entropy, 'mean': mean, 'loss': loss, 'flops': current_flops}) + '\n')
             f.close()
 
-        plt.figure(figsize=(25, 5))
+        plt.figure(figsize=(25, 4))
         for i, (data, title, color) in enumerate(zip(
-            [self.variances, self.entropies, self.means, self.losses, self.flops],
-            ['Gradient Variance', 'Gradient Entropy', 'Gradient Mean', 'Training Loss', 'Cumulative FLOPs'],
+            [self.variances, self.entropies, self.means, self.losses],
+            ['Gradient Variance', 'Gradient Entropy', 'Gradient Mean', 'Training Loss'],
             ['blue', 'green', 'orange', 'red', 'purple']
         )):
             plt.subplot(1, 5, i+1)
