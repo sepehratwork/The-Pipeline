@@ -6,7 +6,7 @@ class GRPOAlgorithm(RLAlgorithm):
         self.epsilon = epsilon
         self.beta = beta
 
-    def compute_loss(self, policy_logprobs, ref_logprobs, advantages, comp_mask):
+    def compute_loss(self, policy_logprobs, ref_logprobs, advantages, comp_mask, **kwargs):
         ratio = torch.exp(policy_logprobs - ref_logprobs)
         adv = advantages.unsqueeze(1)
 

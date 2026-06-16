@@ -1,4 +1,4 @@
 class RLAlgorithm:
     """Base class for RL algorithms to ensure generalization."""
-    def compute_loss(self, policy_logprobs, ref_logprobs, advantages, comp_mask):
+    def compute_loss(self, policy_logprobs, ref_logprobs, advantages, comp_mask, **kwargs):
         raise NotImplementedError

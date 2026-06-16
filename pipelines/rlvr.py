@@ -1,3 +1,4 @@
+# pipelines/rlvr.py
 import os
 import json
 import shutil
@@ -8,6 +9,7 @@ import matplotlib.pyplot as plt
 from data import prepare_rlvr_dataset
 from models import get_model_classes
 from rl_algorithms import get_rl_algorithm
+from rl_algorithms.dapo import DAPOAlgorithm
 from utils import generate_completions, get_resume_state, get_latest_checkpoint, cleanup_checkpoints, clear_all_checkpoints
 
 def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path, rl_algo_name="grpo"):
@@ -19,11 +21,11 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path, rl_algo_
     ds = prepare_rlvr_dataset("../Dolci-Think-RL-32B", tokenizer)
     
     ConfigClass, ModelClass = get_model_classes(model_type)
-    config = ConfigClass.from_pretrained(stage5_model_path)
+    config = ConfigClass.frompretrained(stage5_model_path)
     dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Robust resumption loop for custom training loop
+    # Robust resumption loop
     while True:
         ckpt_dir = get_latest_checkpoint(stage6_dir)
         if ckpt_dir:
@@ -56,6 +58,9 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path, rl_algo_
 
     max_steps, group_size, gradient_accumulation_steps = 6, 2, 4
     max_prompt_length, max_completion_length = 1024, 2048
+    
+    # DAPO specific hyperparams for Soft Overlong Punishment
+    l_cache = max_completion_length // 5 
 
     steps_list, variances, entropies, means, losses, flops_list = [], [], [], [], [], []
     total_flops = 0
@@ -72,39 +77,67 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path, rl_algo_
                     losses.append(data['loss'])
                     flops_list.append(data.get('flops', 0))
                     total_flops = data.get('flops', 0)
-            f.close()
 
     model.train()
     optimizer.zero_grad()
 
+    dataset_index = start_step
+
     for step in range(start_step, max_steps):
-        example = ds[step % len(ds)]
+        valid_batch_found = False
         
-        # Directly use the pre-extracted fields from the cached dataset
-        prompt_text = example["prompt_text"]
-        ground_truth = example["ground_truth"]
+        # DAPO: Dynamic Sampling Loop (Section 3.2)
+        # Keep sampling until we find a batch where accuracy is neither 0 nor 1
+        while not valid_batch_found:
+            example = ds[dataset_index % len(ds)]
+            dataset_index += 1
+            
+            prompt_text = example["prompt_text"]
+            ground_truth = example["ground_truth"]
 
-        inputs = tokenizer(prompt_text, return_tensors="pt", truncation=True, max_length=max_prompt_length).to(device)
-        input_ids = inputs.input_ids.repeat(group_size, 1)
-        attention_mask = inputs.attention_mask.repeat(group_size, 1)
+            inputs = tokenizer(prompt_text, return_tensors="pt", truncation=True, max_length=max_prompt_length).to(device)
+            input_ids = inputs.input_ids.repeat(group_size, 1)
+            attention_mask = inputs.attention_mask.repeat(group_size, 1)
 
-        model.eval()
-        model.config.use_cache = True
-        with torch.no_grad():
-            completions = generate_completions(model, input_ids, attention_mask, max_completion_length, tokenizer.pad_token_id, tokenizer.eos_token_id)
-        model.train()
-        model.config.use_cache = False
-        
-        prompt_len = input_ids.size(1)
-        decoded_completions = tokenizer.batch_decode(completions, skip_special_tokens=True)
+            model.eval()
+            model.config.use_cache = True
+            with torch.no_grad():
+                completions = generate_completions(model, input_ids, attention_mask, max_completion_length, tokenizer.pad_token_id, tokenizer.eos_token_id)
+            model.train()
+            model.config.use_cache = False
+            
+            prompt_len = input_ids.size(1)
+            decoded_completions = tokenizer.batch_decode(completions, skip_special_tokens=True)
 
-        rewards = []
-        for comp in decoded_completions:
-            reward = 0.5 if "<think>" in comp and "</think>" in comp else 0.0
-            if ground_truth and str(ground_truth).lower() in comp.lower(): reward += 1.0
-            rewards.append(reward)
+            rewards = []
+            is_correct_list = []
+            for comp in decoded_completions:
+                reward = 0.5 if "<think>" in comp and "</think>" in comp else 0.0
+                is_correct = 1.0 if (ground_truth and str(ground_truth).lower() in comp.lower()) else 0.0
+                reward += is_correct
+                
+                rewards.append(reward)
+                is_correct_list.append(is_correct)
+
+            # DAPO Dynamic Sampling Check
+            if rl_algo_name == "dapo":
+                accuracy = sum(is_correct_list) / len(is_correct_list)
+                if accuracy == 1.0 or accuracy == 0.0:
+                    # Filter out zero-advantage batches to prevent gradient shrinking
+                    continue 
+            
+            valid_batch_found = True
 
         rewards = torch.tensor(rewards, dtype=dtype, device=device)
+        
+        # DAPO: Soft Overlong Punishment (Section 3.4)
+        if rl_algo_name == "dapo":
+            comp_lengths = (completions != tokenizer.pad_token_id).sum(dim=1).float()
+            punishments = DAPOAlgorithm.compute_soft_overlong_punishment(
+                comp_lengths, l_max=max_completion_length, l_cache=l_cache
+            ).to(device)
+            rewards = rewards + punishments
+
         advantages = (rewards - rewards.mean()) / (rewards.std() + 1e-8)
 
         full_ids = torch.cat([input_ids, completions], dim=1)
@@ -120,7 +153,15 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path, rl_algo_
             ref_token_logprobs = torch.gather(ref_logprobs, 2, completions.unsqueeze(-1)).squeeze(-1)
 
         comp_mask = (completions != tokenizer.pad_token_id).float()
-        loss = rl_algo.compute_loss(policy_token_logprobs, ref_token_logprobs, advantages, comp_mask) / gradient_accumulation_steps
+        
+        loss = rl_algo.compute_loss(
+            policy_token_logprobs, 
+            ref_token_logprobs, 
+            advantages, 
+            comp_mask,
+            old_logprobs=policy_token_logprobs.detach()
+        ) / gradient_accumulation_steps
+        
         loss.backward()
         
         loss_val = loss.item() * gradient_accumulation_steps
@@ -170,7 +211,6 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path, rl_algo_
 
             with open(log_file, 'a') as f:
                 f.write(json.dumps({'step': step, 'variance': var, 'entropy': entropy, 'mean': mean, 'loss': loss_val, 'flops': total_flops}) + '\n')
-                f.close()
 
             plt.figure(figsize=(25, 5))
             for i, (data, title, color) in enumerate(zip(
