@@ -1,17 +1,19 @@
-# rl_algorithms/__init__.py
 from .base import RLAlgorithm
-from .grpo import GRPOAlgorithm
 from .ppo import PPOAlgorithm
-from .dapo import DAPOAlgorithm
+from .grpo import GRPOAlgorithm
 from .gspo import GSPOAlgorithm
+from .dapo import DAPOAlgorithm
 from .sapo import SAPOAlgorithm
+from .cispo import CISPOAlgorithm
+
 
 RL_ALGO_REGISTRY = {
-    "grpo": GRPOAlgorithm,
     "ppo": PPOAlgorithm,
-    "dapo": DAPOAlgorithm,
+    "grpo": GRPOAlgorithm,
     "gspo": GSPOAlgorithm,
+    "dapo": DAPOAlgorithm,
     "sapo": SAPOAlgorithm,
+    "cispo": CISPOAlgorithm,
 }
 
 def get_rl_algorithm(algo_name: str, **kwargs):
