@@ -35,7 +35,7 @@ def main():
     # Post-training Stages
     stage4_model = run_stage4_sft(model_type, tokenizer, posttrain_dir, stage3_model)
     stage5_model = run_stage5_dpo(model_type, tokenizer, posttrain_dir, stage4_model)
-    run_stage6_rlvr(model_type, tokenizer, posttrain_dir, stage5_model, rl_algo_name="grpo")
+    run_stage6_rlvr(model_type, tokenizer, posttrain_dir, stage5_model)
 
 if __name__ == "__main__":
     main()
