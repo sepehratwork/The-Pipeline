@@ -1,5 +1,6 @@
 import os
 import shutil
+import gc
 import torch
 from transformers import Trainer, TrainingArguments
 
@@ -57,6 +58,10 @@ def _run_pretrain_stage(stage_name, model_type, tokenizer, dataset_path, seq_len
                 
         model.save_pretrained(os.path.join(output_dir, "final_model"))
         clear_all_checkpoints(output_dir) # Remove all checkpoints after phase finishes
+
+        del model, trainer, ds
+        gc.collect()
+        torch.cuda.empty_cache()
         
     clear_all_checkpoints(output_dir) # Failsafe cleanup
     return os.path.join(output_dir, "final_model")
