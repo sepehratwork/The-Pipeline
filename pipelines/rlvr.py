@@ -1,7 +1,8 @@
 import os
 import json
 import shutil
-import inspect  # Added to safely inspect method signatures
+import gc          # Added GC to perform final cleans on algorithm switch
+import inspect     # Safely inspect method signatures
 import torch
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
@@ -24,6 +25,10 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
     dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    # Initialize standard AMP GradScaler if using float16
+    use_scaler = (dtype == torch.float16)
+    scaler = torch.amp.GradScaler("cuda") if use_scaler else None
+
     # Iterate over all available RL algorithms
     for algo_name in RL_ALGO_REGISTRY.keys():
         print(f"\n--- Starting RLVR Training with {algo_name.upper()} ---")
@@ -45,7 +50,13 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
             if ckpt_dir:
                 print(f"Attempting to resume {algo_name.upper()} from {ckpt_dir}")
                 try:
-                    model = ModelClass.from_pretrained(ckpt_dir, config=config).to(dtype).to(device)
+                    # Optimized model loading
+                    model = ModelClass.from_pretrained(
+                        ckpt_dir, 
+                        config=config,
+                        torch_dtype=dtype,
+                        low_cpu_mem_usage=True
+                    ).to(device)
                     optimizer = torch.optim.AdamW(model.parameters(), lr=1.0e-6, fused=torch.cuda.is_available())
                     opt_path = os.path.join(ckpt_dir, "optimizer.pt")
                     if os.path.exists(opt_path):
@@ -57,16 +68,29 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
                     shutil.rmtree(ckpt_dir, ignore_errors=True)
             else:
                 print(f"No valid checkpoint found for {algo_name.upper()}. Starting training from the beginning.")
-                model = ModelClass.from_pretrained(stage5_model_path, config=config).to(dtype).to(device)
+                model = ModelClass.from_pretrained(
+                    stage5_model_path, 
+                    config=config,
+                    torch_dtype=dtype,
+                    low_cpu_mem_usage=True
+                ).to(device)
                 optimizer = torch.optim.AdamW(model.parameters(), lr=1.0e-6, fused=torch.cuda.is_available())
                 start_step = 0
                 break
 
-        ref_model = ModelClass.from_pretrained(stage5_model_path, config=config).to(dtype).to(device)
-        model.gradient_checkpointing_enable()
+        ref_model = ModelClass.from_pretrained(
+            stage5_model_path, 
+            config=config,
+            torch_dtype=dtype,
+            low_cpu_mem_usage=True
+        ).to(device)
         
+        # Configure non-reentrant gradient checkpointing
+        model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+        
+        # Free up reference model gradient tracking
+        ref_model.requires_grad_(False)
         ref_model.eval()
-        for param in ref_model.parameters(): param.requires_grad = False
 
         rl_algo = get_rl_algorithm(algo_name)
 
@@ -89,8 +113,9 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
                         flops_list.append(data.get('flops', 0))
                         total_flops = data.get('flops', 0)
 
+        # Set training mode first
         model.train()
-        optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=True)
 
         for step in range(start_step, max_steps):
             example = ds[step % len(ds)]
@@ -103,10 +128,13 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
             input_ids = inputs.input_ids.repeat(group_size, 1)
             attention_mask = inputs.attention_mask.repeat(group_size, 1)
 
+            # model.eval() is correctly set after model.train()
             model.eval()
             model.config.use_cache = True
             with torch.no_grad():
-                completions = generate_completions(model, input_ids, attention_mask, max_completion_length, tokenizer.pad_token_id, tokenizer.eos_token_id)
+                # Perform generation inside autocast context
+                with torch.amp.autocast(device_type="cuda", dtype=dtype):
+                    completions = generate_completions(model, input_ids, attention_mask, max_completion_length, tokenizer.pad_token_id, tokenizer.eos_token_id)
             model.train()
             model.config.use_cache = False
             
@@ -125,44 +153,58 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
             full_ids = torch.cat([input_ids, completions], dim=1)
             full_mask = torch.cat([attention_mask, (completions != tokenizer.pad_token_id).long()], dim=1)
 
-            policy_outputs = model(input_ids=full_ids, attention_mask=full_mask)
-            policy_logprobs = F.log_softmax(policy_outputs.logits[:, prompt_len-1:-1, :], dim=-1)
-            policy_token_logprobs = torch.gather(policy_logprobs, 2, completions.unsqueeze(-1)).squeeze(-1)
+            # Training forward pass with target mixed precision autocast
+            with torch.amp.autocast(device_type="cuda", dtype=dtype):
+                policy_outputs = model(input_ids=full_ids, attention_mask=full_mask)
+                # Keep log_softmax operations in float32 for numerical stability
+                policy_logits = policy_outputs.logits[:, prompt_len-1:-1, :].float()
+                policy_logprobs = F.log_softmax(policy_logits, dim=-1)
+                policy_token_logprobs = torch.gather(policy_logprobs, 2, completions.unsqueeze(-1)).squeeze(-1)
 
-            with torch.no_grad():
-                ref_outputs = ref_model(input_ids=full_ids, attention_mask=full_mask)
-                ref_logprobs = F.log_softmax(ref_outputs.logits[:, prompt_len-1:-1, :], dim=-1)
-                ref_token_logprobs = torch.gather(ref_logprobs, 2, completions.unsqueeze(-1)).squeeze(-1)
+                with torch.no_grad():
+                    ref_outputs = ref_model(input_ids=full_ids, attention_mask=full_mask)
+                    ref_logits = ref_outputs.logits[:, prompt_len-1:-1, :].float()
+                    ref_logprobs = F.log_softmax(ref_logits, dim=-1)
+                    ref_token_logprobs = torch.gather(ref_logprobs, 2, completions.unsqueeze(-1)).squeeze(-1)
 
-            comp_mask = (completions != tokenizer.pad_token_id).float()
+                comp_mask = (completions != tokenizer.pad_token_id).float()
 
-            # Inspect compute_loss signature to dynamically pass old_logprobs if supported
-            loss_kwargs = {}
-            sig = inspect.signature(rl_algo.compute_loss)
-            if "old_logprobs" in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
-                loss_kwargs["old_logprobs"] = policy_token_logprobs.detach()
+                # Inspect compute_loss signature to dynamically pass old_logprobs if supported
+                loss_kwargs = {}
+                sig = inspect.signature(rl_algo.compute_loss)
+                if "old_logprobs" in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+                    loss_kwargs["old_logprobs"] = policy_token_logprobs.detach()
 
-            loss = rl_algo.compute_loss(
-                policy_token_logprobs, 
-                ref_token_logprobs, 
-                advantages, 
-                comp_mask, 
-                **loss_kwargs
-            ) / gradient_accumulation_steps
-            
-            loss.backward()
+                loss = rl_algo.compute_loss(
+                    policy_token_logprobs, 
+                    ref_token_logprobs, 
+                    advantages, 
+                    comp_mask, 
+                    **loss_kwargs
+                ) / gradient_accumulation_steps
             
             loss_val = loss.item() * gradient_accumulation_steps
+            
+            # Scaled backward pass if using float16
+            if scaler is not None:
+                scaler.scale(loss).backward()
+            else:
+                loss.backward()
             
             N, P = full_ids.size(1) * group_size, sum(p.numel() for p in model.parameters())
             total_flops += 8 * N * P + (2 * max_completion_length * group_size * P)
 
-            del policy_outputs, policy_logprobs, policy_token_logprobs
-            del ref_outputs, ref_logprobs, ref_token_logprobs
-            del full_ids, full_mask, loss
-            torch.cuda.empty_cache()
+            # Manual in-step cleanup of tensors to optimize VRAM
+            del policy_outputs, policy_logits, policy_logprobs, policy_token_logprobs
+            del ref_outputs, ref_logits, ref_logprobs, ref_token_logprobs
+            del full_ids, full_mask, loss, inputs, input_ids, attention_mask, completions, decoded_completions, advantages, rewards
+            # (Note: torch.cuda.empty_cache() has been removed from the inner step loop to avoid severe slowdowns)
 
             if (step + 1) % gradient_accumulation_steps == 0 or (step + 1) == max_steps:
+                # If using a scaler, unscale the gradients before calculating metrics and clipping
+                if scaler is not None:
+                    scaler.unscale_(optimizer)
+
                 total_elements, sum_grads, sum_sq_grads, sum_abs_grads = 0, 0.0, 0.0, 0.0
                 for p in model.parameters():
                     if p.grad is not None:
@@ -187,8 +229,14 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
 
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
-                optimizer.step()
-                optimizer.zero_grad()
+                # Optimizer step with scalability check
+                if scaler is not None:
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    optimizer.step()
+
+                optimizer.zero_grad(set_to_none=True)
 
                 steps_list.append(step)
                 variances.append(var)
@@ -225,8 +273,9 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
         clear_all_checkpoints(algo_dir)
         print(f"=== {algo_name.upper()} Training Completed ===")
         
-        # Free memory before moving to the next algorithm
+        # Free memory at the algorithm boundaries
         del model, ref_model, optimizer, rl_algo
+        gc.collect()
         torch.cuda.empty_cache()
 
     print("=== Stage 6 Completed Successfully ===")
