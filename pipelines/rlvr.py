@@ -1,6 +1,7 @@
 import os
 import json
 import shutil
+import inspect  # Added to safely inspect method signatures
 import torch
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
@@ -134,7 +135,21 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
                 ref_token_logprobs = torch.gather(ref_logprobs, 2, completions.unsqueeze(-1)).squeeze(-1)
 
             comp_mask = (completions != tokenizer.pad_token_id).float()
-            loss = rl_algo.compute_loss(policy_token_logprobs, ref_token_logprobs, advantages, comp_mask) / gradient_accumulation_steps
+
+            # Inspect compute_loss signature to dynamically pass old_logprobs if supported
+            loss_kwargs = {}
+            sig = inspect.signature(rl_algo.compute_loss)
+            if "old_logprobs" in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+                loss_kwargs["old_logprobs"] = policy_token_logprobs.detach()
+
+            loss = rl_algo.compute_loss(
+                policy_token_logprobs, 
+                ref_token_logprobs, 
+                advantages, 
+                comp_mask, 
+                **loss_kwargs
+            ) / gradient_accumulation_steps
+            
             loss.backward()
             
             loss_val = loss.item() * gradient_accumulation_steps

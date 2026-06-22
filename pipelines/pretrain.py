@@ -8,30 +8,52 @@ from models import get_model_classes
 from data import load_pretrain_phase_dataset
 from utils import GradientMetricsCallback, get_latest_checkpoint, clear_all_checkpoints
 
+# Configure PyTorch backends for optimal performance on Ampere+ architectures
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+
 
 def _run_pretrain_stage(stage_name, model_type, tokenizer, dataset_path, seq_len, output_dir, config_kwargs, train_args_kwargs, resume_model_path=None):
     if not os.path.exists(os.path.join(output_dir, "final_model", "model.safetensors")):
         print(f"=== Starting {stage_name} ===")
         os.makedirs(output_dir, exist_ok=True)
         ConfigClass, ModelClass = get_model_classes(model_type)
+        
+        # Determine the target precision
+        dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        
         if resume_model_path:
             config = ConfigClass.from_pretrained(resume_model_path)
             for k, v in config_kwargs.items():
                 setattr(config, k, v)
-            model = ModelClass.from_pretrained(resume_model_path, config=config, ignore_mismatched_sizes=True)
+            # Use torch_dtype for memory-efficient loading directly to the target precision
+            model = ModelClass.from_pretrained(
+                resume_model_path, 
+                config=config, 
+                ignore_mismatched_sizes=True,
+                torch_dtype=dtype
+            )
         else:
             config = ConfigClass(vocab_size=len(tokenizer), **config_kwargs)
-            model = ModelClass(config)
+            model = ModelClass(config).to(dtype)
+            
         ds = load_pretrain_phase_dataset(dataset_path, tokenizer, seq_len=seq_len)
+        
         args = TrainingArguments(
             output_dir=output_dir,
             report_to="none",
             fp16=not torch.cuda.is_bf16_supported(),
             bf16=torch.cuda.is_bf16_supported(),
             gradient_checkpointing=True,
+            # Modern PyTorch non-reentrant gradient checkpointing standard
+            gradient_checkpointing_kwargs={"use_reentrant": False},
             max_grad_norm=1.0,
             optim="adamw_torch_fused",
             save_total_limit=2,
+            # Ensure pinned memory for fast host-to-device transfers
+            dataloader_pin_memory=True,
+            # Leverage PyTorch 2.x JIT graph compilation if supported
+            torch_compile=torch.cuda.is_available() and hasattr(torch, "compile"),
             **train_args_kwargs
         )
         trainer = Trainer(
