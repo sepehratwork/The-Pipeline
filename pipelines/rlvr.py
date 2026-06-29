@@ -117,6 +117,8 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
         model.train()
         optimizer.zero_grad(set_to_none=True)
 
+        vocab_size = model.config.vocab_size
+
         for step in range(start_step, max_steps):
             example = ds[step % len(ds)]
             
@@ -138,6 +140,9 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
             model.train()
             model.config.use_cache = False
             
+            # Flush generation and KV cache memory before training passes
+            torch.cuda.empty_cache()
+            
             prompt_len = input_ids.size(1)
             decoded_completions = tokenizer.batch_decode(completions, skip_special_tokens=True)
 
@@ -153,19 +158,43 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
             full_ids = torch.cat([input_ids, completions], dim=1)
             full_mask = torch.cat([attention_mask, (completions != tokenizer.pad_token_id).long()], dim=1)
 
-            # Training forward pass with target mixed precision autocast
-            with torch.amp.autocast(device_type="cuda", dtype=dtype):
-                policy_outputs = model(input_ids=full_ids, attention_mask=full_mask)
-                # Keep log_softmax operations in float32 for numerical stability
-                policy_logits = policy_outputs.logits[:, prompt_len-1:-1, :].float()
-                policy_logprobs = F.log_softmax(policy_logits, dim=-1)
-                policy_token_logprobs = torch.gather(policy_logprobs, 2, completions.unsqueeze(-1)).squeeze(-1)
+            # Clamp target token indices to be strictly within vocabulary range to avoid IndexErrors.
+            # This is mathematically sound as pad tokens are masked out by comp_mask during loss computation.
+            safe_completions = torch.clamp(completions, min=0, max=vocab_size - 1)
 
-                with torch.no_grad():
+            # 1. Compute reference token logprobs first (no gradients needed)
+            # This avoids keeping reference forward activations in memory during the policy forward pass
+            with torch.no_grad():
+                with torch.amp.autocast(device_type="cuda", dtype=dtype):
                     ref_outputs = ref_model(input_ids=full_ids, attention_mask=full_mask)
                     ref_logits = ref_outputs.logits[:, prompt_len-1:-1, :].float()
-                    ref_logprobs = F.log_softmax(ref_logits, dim=-1)
-                    ref_token_logprobs = torch.gather(ref_logprobs, 2, completions.unsqueeze(-1)).squeeze(-1)
+                    
+                    # Memory optimization: use cross_entropy to avoid allocating massive [B, L, V] logprobs tensor
+                    ref_token_logprobs = -F.cross_entropy(
+                        ref_logits.transpose(1, 2), 
+                        safe_completions, 
+                        reduction="none"
+                    )
+
+            # Immediately delete reference variables and clean cache before policy forward
+            del ref_outputs, ref_logits
+            gc.collect()
+            torch.cuda.empty_cache()
+
+            # 2. Compute policy token logprobs (gradients needed)
+            with torch.amp.autocast(device_type="cuda", dtype=dtype):
+                policy_outputs = model(input_ids=full_ids, attention_mask=full_mask)
+                policy_logits = policy_outputs.logits[:, prompt_len-1:-1, :].float()
+                
+                # Delete the original output wrapper early to free references
+                del policy_outputs
+                
+                # Memory optimization: use cross_entropy to avoid allocating massive [B, L, V] logprobs tensor
+                policy_token_logprobs = -F.cross_entropy(
+                    policy_logits.transpose(1, 2), 
+                    safe_completions, 
+                    reduction="none"
+                )
 
                 comp_mask = (completions != tokenizer.pad_token_id).float()
 
@@ -185,20 +214,28 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
             
             loss_val = loss.item() * gradient_accumulation_steps
             
-            # Scaled backward pass if using float16
+            # 3. Calculate FLOPs metrics before deleting any tensors
+            N, P = full_ids.size(1) * group_size, sum(p.numel() for p in model.parameters())
+            total_flops += 8 * N * P + (2 * max_completion_length * group_size * P)
+
+            # 4. Clean up Python-side references to intermediate tensors before backward pass.
+            # The autograd graph attached to `loss` keeps the required underlying tensors intact.
+            del policy_logits, policy_token_logprobs
+            del ref_token_logprobs, advantages, comp_mask
+            del full_ids, full_mask, inputs, input_ids, attention_mask, completions, decoded_completions, rewards, safe_completions
+            
+            # Force clean up to maximize contiguous GPU memory for backward pass
+            gc.collect()
+            torch.cuda.empty_cache()
+
+            # 5. Perform backward pass
             if scaler is not None:
                 scaler.scale(loss).backward()
             else:
                 loss.backward()
-            
-            N, P = full_ids.size(1) * group_size, sum(p.numel() for p in model.parameters())
-            total_flops += 8 * N * P + (2 * max_completion_length * group_size * P)
 
-            # Manual in-step cleanup of tensors to optimize VRAM
-            del policy_outputs, policy_logits, policy_logprobs, policy_token_logprobs
-            del ref_outputs, ref_logits, ref_logprobs, ref_token_logprobs
-            del full_ids, full_mask, loss, inputs, input_ids, attention_mask, completions, decoded_completions, advantages, rewards
-            # (Note: torch.cuda.empty_cache() has been removed from the inner step loop to avoid severe slowdowns)
+            # Free loss tensor reference as it is no longer needed
+            del loss
 
             if (step + 1) % gradient_accumulation_steps == 0 or (step + 1) == max_steps:
                 # If using a scaler, unscale the gradients before calculating metrics and clipping
