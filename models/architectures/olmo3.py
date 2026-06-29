@@ -3,9 +3,9 @@ import torch.nn as nn
 from transformers import PretrainedConfig, PreTrainedModel, GenerationMixin
 from transformers.modeling_outputs import CausalLMOutputWithPast
 
-from .normalization import RMSNorm
-from .mlp import SwiGLUMLP
-from .attention import GroupedQueryAttention
+from ..utils.normalization import RMSNorm
+from ..utils.mlp import SwiGLUMLP
+from ..utils.attention import GroupedQueryAttention
 
 
 class OLMo3Config(PretrainedConfig):
