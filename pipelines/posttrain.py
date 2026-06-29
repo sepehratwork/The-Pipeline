@@ -9,13 +9,18 @@ from datasets import load_dataset
 from models import get_model_classes
 from data import prepare_sft_dataset, prepare_dpo_dataset
 from utils import GradientMetricsCallback, get_latest_checkpoint, clear_all_checkpoints
+from utils.callbacks import StageTimer
 
 
 def run_stage4_sft(model_type, tokenizer, base_dir, stage3_model_path):
+    stage4_dir = os.path.join(base_dir, "Stage4")
     if not os.path.exists(os.path.join(base_dir, "final_model", "model.safetensors")):
         print("=== Starting Stage 4: Supervised Finetuning (SFT) ===")
-        stage4_dir = os.path.join(base_dir, "Stage4")
         os.makedirs(stage4_dir, exist_ok=True)
+
+        # Start Stage Timing
+        timer = StageTimer(base_dir)
+        start_t = timer.start_stage("Stage 4: Supervised Finetuning (SFT)")
 
         ConfigClass, ModelClass = get_model_classes(model_type)
         config = ConfigClass.from_pretrained(stage3_model_path)
@@ -68,14 +73,22 @@ def run_stage4_sft(model_type, tokenizer, base_dir, stage3_model_path):
         del model, trainer, ds
         gc.collect()
         torch.cuda.empty_cache()
+
+        # End Stage Timing
+        timer.end_stage("Stage 4: Supervised Finetuning (SFT)", start_t)
+
     return os.path.join(stage4_dir, "final_model")
 
 
 def run_stage5_dpo(model_type, tokenizer, base_dir, stage4_model_path):
+    stage5_dir = os.path.join(base_dir, "Stage5")
     if not os.path.exists(os.path.join(base_dir, "final_model", "model.safetensors")):
         print("=== Starting Stage 5: Direct Preference Optimization (DPO) ===")
-        stage5_dir = os.path.join(base_dir, "Stage5")
         os.makedirs(stage5_dir, exist_ok=True)
+
+        # Start Stage Timing
+        timer = StageTimer(base_dir)
+        start_t = timer.start_stage("Stage 5: Direct Preference Optimization (DPO)")
 
         ConfigClass, ModelClass = get_model_classes(model_type)
         config = ConfigClass.from_pretrained(stage4_model_path)
@@ -141,5 +154,8 @@ def run_stage5_dpo(model_type, tokenizer, base_dir, stage4_model_path):
         del model, ref_model, trainer, ds
         gc.collect()
         torch.cuda.empty_cache()
+
+        # End Stage Timing
+        timer.end_stage("Stage 5: Direct Preference Optimization (DPO)", start_t)
 
     return os.path.join(stage5_dir, "final_model")

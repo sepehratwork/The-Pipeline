@@ -7,12 +7,19 @@ from transformers import Trainer, TrainingArguments
 from models import get_model_classes
 from data import load_pretrain_phase_dataset
 from utils import GradientMetricsCallback, get_latest_checkpoint, clear_all_checkpoints
+from utils.callbacks import StageTimer
 
 
 def _run_pretrain_stage(stage_name, model_type, tokenizer, dataset_path, seq_len, output_dir, config_kwargs, train_args_kwargs, resume_model_path=None):
     if not os.path.exists(os.path.join(output_dir, "final_model", "model.safetensors")):
         print(f"=== Starting {stage_name} ===")
         os.makedirs(output_dir, exist_ok=True)
+        
+        # Start Stage Timing
+        base_dir = os.path.dirname(output_dir)
+        timer = StageTimer(base_dir)
+        start_t = timer.start_stage(stage_name)
+        
         ConfigClass, ModelClass = get_model_classes(model_type)
         
         dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
@@ -74,6 +81,9 @@ def _run_pretrain_stage(stage_name, model_type, tokenizer, dataset_path, seq_len
         del model, trainer, ds
         gc.collect()
         torch.cuda.empty_cache()
+        
+        # End Stage Timing
+        timer.end_stage(stage_name, start_t)
         
     clear_all_checkpoints(output_dir) # Failsafe cleanup
     return os.path.join(output_dir, "final_model")

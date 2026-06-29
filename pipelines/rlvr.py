@@ -6,11 +6,13 @@ import inspect     # Safely inspect method signatures
 import torch
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
+import time
 
 from data import prepare_rlvr_dataset
 from models import get_model_classes
 from rl_algorithms import get_rl_algorithm, RL_ALGO_REGISTRY
 from utils import generate_completions, get_resume_state, get_latest_checkpoint, cleanup_checkpoints, clear_all_checkpoints
+from utils.callbacks import StageTimer
 
 
 def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
@@ -29,6 +31,9 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
     use_scaler = (dtype == torch.float16)
     scaler = torch.amp.GradScaler("cuda") if use_scaler else None
 
+    # Initialize Cumulative Stage 6 Timer
+    global_timer = StageTimer(base_dir)
+
     # Iterate over all available RL algorithms
     for algo_name in RL_ALGO_REGISTRY.keys():
         print(f"\n--- Starting RLVR Training with {algo_name.upper()} ---")
@@ -41,6 +46,10 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
         if os.path.exists(final_model_path):
             print(f"Algorithm {algo_name.upper()} already completed. Skipping to next.")
             continue
+
+        # Start Stage Timing for the active algorithm
+        stage_key = f"Stage 6: RLVR ({algo_name.upper()})"
+        start_t = global_timer.start_stage(stage_key)
 
         log_file = os.path.join(algo_dir, "training_log.jsonl")
 
@@ -85,8 +94,9 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
             low_cpu_mem_usage=True
         ).to(device)
         
-        # Configure non-reentrant gradient checkpointing
+        # Configure non-reentrant gradient checkpointing and input requirements to allow backward tracking
         model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+        model.enable_input_require_grads()
         
         # Free up reference model gradient tracking
         ref_model.requires_grad_(False)
@@ -98,6 +108,8 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
         max_prompt_length, max_completion_length = 1024, 2048
 
         steps_list, variances, entropies, means, losses, flops_list = [], [], [], [], [], []
+        tokens_per_sec_list = []
+        tokens_per_sec_buffer = []  # Accumulate tokens per sec for averaging across accumulation steps
         total_flops = 0
 
         if os.path.exists(log_file):
@@ -111,6 +123,7 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
                         means.append(data['mean'])
                         losses.append(data['loss'])
                         flops_list.append(data.get('flops', 0))
+                        tokens_per_sec_list.append(data.get('tokens_per_sec', 0.0))
                         total_flops = data.get('flops', 0)
 
         # Set training mode first
@@ -133,10 +146,22 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
             # model.eval() is correctly set after model.train()
             model.eval()
             model.config.use_cache = True
+            
+            # Measure generation time for tokens per second calculation
+            start_gen_time = time.time()
             with torch.no_grad():
                 # Perform generation inside autocast context
                 with torch.amp.autocast(device_type="cuda", dtype=dtype):
                     completions = generate_completions(model, input_ids, attention_mask, max_completion_length, tokenizer.pad_token_id, tokenizer.eos_token_id)
+            gen_duration = time.time() - start_gen_time
+            
+            # Calculate generated tokens per second (excluding padding tokens)
+            non_pad_tokens = (completions != tokenizer.pad_token_id).sum().item()
+            tokens_per_sec = non_pad_tokens / gen_duration if gen_duration > 0 else 0.0
+            tokens_per_sec_buffer.append(tokens_per_sec)
+            
+            print(f"[{algo_name.upper()}] Step {step}: Generated {non_pad_tokens} tokens in {gen_duration:.2f}s ({tokens_per_sec:.2f} tokens/s)")
+
             model.train()
             model.config.use_cache = False
             
@@ -242,25 +267,26 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
                 if scaler is not None:
                     scaler.unscale_(optimizer)
 
-                total_elements, sum_grads, sum_sq_grads, sum_abs_grads = 0, 0.0, 0.0, 0.0
-                for p in model.parameters():
-                    if p.grad is not None:
-                        grad = p.grad.float()
-                        total_elements += grad.numel()
-                        sum_grads += grad.sum().item()
-                        sum_sq_grads += (grad ** 2).sum().item()
-                        sum_abs_grads += grad.abs().sum().item()
-
-                if total_elements > 0:
-                    mean = sum_grads / total_elements
-                    var = (sum_sq_grads / total_elements) - (mean ** 2)
-                    entropy = 0.0
-                    sum_abs_grads += 1e-8
-                    for p in model.parameters():
-                        if p.grad is not None:
-                            prob = p.grad.float().abs() / sum_abs_grads
-                            prob = prob[prob > 0]
-                            entropy -= (prob * torch.log(prob)).sum().item()
+                # Optimised vector-wise calculation of gradient mean, variance, and entropy
+                grads = [p.grad.view(-1).float() for p in model.parameters() if p.grad is not None]
+                if grads:
+                    all_grads = torch.cat(grads)
+                    total_elements = all_grads.numel()
+                    
+                    if total_elements > 0:
+                        sum_grads = all_grads.sum().item()
+                        sum_sq_grads = (all_grads ** 2).sum().item()
+                        
+                        mean = sum_grads / total_elements
+                        var = (sum_sq_grads / total_elements) - (mean ** 2)
+                        
+                        abs_grads = all_grads.abs()
+                        sum_abs_grads = abs_grads.sum().item() + 1e-8
+                        prob = abs_grads / sum_abs_grads
+                        prob = prob[prob > 0]
+                        entropy = -torch.sum(prob * torch.log(prob)).item()
+                    else:
+                        mean, var, entropy = 0.0, 0.0, 0.0
                 else:
                     mean, var, entropy = 0.0, 0.0, 0.0
 
@@ -275,23 +301,37 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
 
                 optimizer.zero_grad(set_to_none=True)
 
+                # Average the tokens per second throughput over the accumulation step
+                avg_tokens_per_sec = sum(tokens_per_sec_buffer) / len(tokens_per_sec_buffer) if tokens_per_sec_buffer else 0.0
+                tokens_per_sec_buffer = []
+
                 steps_list.append(step)
                 variances.append(var)
                 entropies.append(entropy)
                 means.append(mean)
                 losses.append(loss_val)
                 flops_list.append(total_flops)
+                tokens_per_sec_list.append(avg_tokens_per_sec)
 
                 with open(log_file, 'a') as f:
-                    f.write(json.dumps({'step': step, 'variance': var, 'entropy': entropy, 'mean': mean, 'loss': loss_val, 'flops': total_flops}) + '\n')
+                    f.write(json.dumps({
+                        'step': step, 
+                        'variance': var, 
+                        'entropy': entropy, 
+                        'mean': mean, 
+                        'loss': loss_val, 
+                        'flops': total_flops,
+                        'tokens_per_sec': avg_tokens_per_sec
+                    }) + '\n')
 
-                plt.figure(figsize=(25, 5))
+                # Render metrics over 6 subplot panels
+                plt.figure(figsize=(30, 5))
                 for i, (data, title, color) in enumerate(zip(
-                    [variances, entropies, means, losses, flops_list],
-                    ['Gradient Variance', 'Gradient Entropy', 'Gradient Mean', 'Training Loss', 'Cumulative FLOPs'],
-                    ['blue', 'green', 'orange', 'red', 'purple']
+                    [variances, entropies, means, losses, flops_list, tokens_per_sec_list],
+                    ['Gradient Variance', 'Gradient Entropy', 'Gradient Mean', 'Training Loss', 'Cumulative FLOPs', 'Inference Tokens/sec'],
+                    ['blue', 'green', 'orange', 'red', 'purple', 'brown']
                 )):
-                    plt.subplot(1, 5, i+1)
+                    plt.subplot(1, 6, i+1)
                     plt.plot(steps_list, data, color=color)
                     plt.title(title)
                     plt.xlabel('Steps')
@@ -314,5 +354,8 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
         del model, ref_model, optimizer, rl_algo
         gc.collect()
         torch.cuda.empty_cache()
+
+        # End timing for the algorithm stage
+        global_timer.end_stage(stage_key, start_t)
 
     print("=== Stage 6 Completed Successfully ===")
