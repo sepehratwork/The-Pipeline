@@ -14,7 +14,7 @@ from utils.callbacks import StageTimer
 
 def run_stage4_sft(model_type, tokenizer, base_dir, stage3_model_path):
     stage4_dir = os.path.join(base_dir, "Stage4")
-    if not os.path.exists(os.path.join(base_dir, "final_model", "model.safetensors")):
+    if not os.path.exists(os.path.join(stage4_dir, "final_model", "model.safetensors")):
         print("=== Starting Stage 4: Supervised Finetuning (SFT) ===")
         os.makedirs(stage4_dir, exist_ok=True)
 
@@ -82,7 +82,7 @@ def run_stage4_sft(model_type, tokenizer, base_dir, stage3_model_path):
 
 def run_stage5_dpo(model_type, tokenizer, base_dir, stage4_model_path):
     stage5_dir = os.path.join(base_dir, "Stage5")
-    if not os.path.exists(os.path.join(base_dir, "final_model", "model.safetensors")):
+    if not os.path.exists(os.path.join(stage5_dir, "final_model", "model.safetensors")):
         print("=== Starting Stage 5: Direct Preference Optimization (DPO) ===")
         os.makedirs(stage5_dir, exist_ok=True)
 
