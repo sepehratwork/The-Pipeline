@@ -76,6 +76,8 @@ class GradientMetricsCallback(TrainerCallback):
         self.log_file = log_file
         self.plot_dir = plot_dir
         self.steps, self.variances, self.entropies, self.means, self.losses, self.flops = [], [], [], [], [], []
+        self.vram_allocated = []
+        self.vram_reserved = []
         os.makedirs(self.plot_dir, exist_ok=True)
 
         # Temporary variables to store gradient metrics calculated right after backward (before optimizer.zero_grad())
@@ -94,7 +96,16 @@ class GradientMetricsCallback(TrainerCallback):
                         self.means.append(data['mean'])
                         self.losses.append(data['loss'])
                         self.flops.append(data.get('flops', 0))
+                        self.vram_allocated.append(data.get('vram_allocated', 0.0))
+                        self.vram_reserved.append(data.get('vram_reserved', 0.0))
                 f.close()
+
+    def on_train_begin(self, args, state, control, **kwargs):
+        """
+        Resets peak memory stats at the start of training.
+        """
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
 
     def on_substep_end(self, args, state, control, model=None, **kwargs):
         """
@@ -130,7 +141,7 @@ class GradientMetricsCallback(TrainerCallback):
 
     def on_step_end(self, args, state, control, model=None, **kwargs):
         """
-        Retrieves the cached gradient metrics, writes them to the log, and saves the plot.
+        Retrieves the cached gradient metrics, measures VRAM usage, writes them to the log, and saves the plot.
         """
         mean = self._temp_mean
         var = self._temp_var
@@ -145,24 +156,47 @@ class GradientMetricsCallback(TrainerCallback):
         current_flops = state.total_flos
         step = state.global_step
 
+        # Measure peak memory usage in GB
+        vram_allocated = torch.cuda.max_memory_allocated() / (1024 ** 3) if torch.cuda.is_available() else 0.0
+        vram_reserved = torch.cuda.max_memory_reserved() / (1024 ** 3) if torch.cuda.is_available() else 0.0
+        
+        # Reset peak memory statistics for the next step
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
+
         self.steps.append(step)
         self.variances.append(var)
         self.entropies.append(entropy)
         self.means.append(mean)
         self.losses.append(loss)
         self.flops.append(current_flops)
+        self.vram_allocated.append(vram_allocated)
+        self.vram_reserved.append(vram_reserved)
 
         with open(self.log_file, 'a') as f:
-            f.write(json.dumps({'step': step, 'variance': var, 'entropy': entropy, 'mean': mean, 'loss': loss, 'flops': current_flops}) + '\n')
+            f.write(json.dumps({
+                'step': step, 
+                'variance': var, 
+                'entropy': entropy, 
+                'mean': mean, 
+                'loss': loss, 
+                'flops': current_flops,
+                'vram_allocated': vram_allocated,
+                'vram_reserved': vram_reserved
+            }) + '\n')
 
-        plt.figure(figsize=(20, 4))
+        # Extended plotting with 5 subplots including VRAM allocation and reservation
+        plt.figure(figsize=(25, 4))
         for i, (data, title, color) in enumerate(zip(
-            [self.variances, self.entropies, self.means, self.losses],
-            ['Gradient Variance', 'Gradient Entropy', 'Gradient Mean', 'Training Loss'],
-            ['blue', 'green', 'orange', 'red']
+            [self.variances, self.entropies, self.means, self.losses, self.vram_allocated],
+            ['Gradient Variance', 'Gradient Entropy', 'Gradient Mean', 'Training Loss', 'Peak VRAM (GB)'],
+            ['blue', 'green', 'orange', 'red', 'magenta']
         )):
-            plt.subplot(1, 4, i+1)
+            plt.subplot(1, 5, i+1)
             plt.plot(self.steps, data, color=color)
+            if title == 'Peak VRAM (GB)' and len(self.vram_reserved) > 0:
+                plt.plot(self.steps, self.vram_reserved, color='purple', linestyle='--', label='Reserved')
+                plt.legend()
             plt.title(title)
             plt.xlabel('Steps')
         plt.tight_layout()

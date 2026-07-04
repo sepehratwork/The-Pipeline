@@ -110,6 +110,8 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
         steps_list, variances, entropies, means, losses, flops_list = [], [], [], [], [], []
         tokens_per_sec_list = []
         tokens_per_sec_buffer = []  # Accumulate tokens per sec for averaging across accumulation steps
+        vram_allocated_list = []
+        vram_reserved_list = []
         total_flops = 0
 
         if os.path.exists(log_file):
@@ -124,11 +126,15 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
                         losses.append(data['loss'])
                         flops_list.append(data.get('flops', 0))
                         tokens_per_sec_list.append(data.get('tokens_per_sec', 0.0))
+                        vram_allocated_list.append(data.get('vram_allocated', 0.0))
+                        vram_reserved_list.append(data.get('vram_reserved', 0.0))
                         total_flops = data.get('flops', 0)
 
         # Set training mode first
         model.train()
         optimizer.zero_grad(set_to_none=True)
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
 
         vocab_size = model.config.vocab_size
 
@@ -305,6 +311,12 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
                 avg_tokens_per_sec = sum(tokens_per_sec_buffer) / len(tokens_per_sec_buffer) if tokens_per_sec_buffer else 0.0
                 tokens_per_sec_buffer = []
 
+                # Capture peak VRAM consumption since last reset
+                vram_allocated = torch.cuda.max_memory_allocated() / (1024 ** 3) if torch.cuda.is_available() else 0.0
+                vram_reserved = torch.cuda.max_memory_reserved() / (1024 ** 3) if torch.cuda.is_available() else 0.0
+                if torch.cuda.is_available():
+                    torch.cuda.reset_peak_memory_stats()
+
                 steps_list.append(step)
                 variances.append(var)
                 entropies.append(entropy)
@@ -312,6 +324,8 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
                 losses.append(loss_val)
                 flops_list.append(total_flops)
                 tokens_per_sec_list.append(avg_tokens_per_sec)
+                vram_allocated_list.append(vram_allocated)
+                vram_reserved_list.append(vram_reserved)
 
                 with open(log_file, 'a') as f:
                     f.write(json.dumps({
@@ -321,18 +335,23 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
                         'mean': mean, 
                         'loss': loss_val, 
                         'flops': total_flops,
-                        'tokens_per_sec': avg_tokens_per_sec
+                        'tokens_per_sec': avg_tokens_per_sec,
+                        'vram_allocated': vram_allocated,
+                        'vram_reserved': vram_reserved
                     }) + '\n')
 
-                # Render metrics over 6 subplot panels
-                plt.figure(figsize=(30, 5))
+                # Render metrics over 7 subplot panels (Added Peak VRAM)
+                plt.figure(figsize=(35, 5))
                 for i, (data, title, color) in enumerate(zip(
-                    [variances, entropies, means, losses, flops_list, tokens_per_sec_list],
-                    ['Gradient Variance', 'Gradient Entropy', 'Gradient Mean', 'Training Loss', 'Cumulative FLOPs', 'Inference Tokens/sec'],
-                    ['blue', 'green', 'orange', 'red', 'purple', 'brown']
+                    [variances, entropies, means, losses, flops_list, tokens_per_sec_list, vram_allocated_list],
+                    ['Gradient Variance', 'Gradient Entropy', 'Gradient Mean', 'Training Loss', 'Cumulative FLOPs', 'Inference Tokens/sec', 'Peak VRAM (GB)'],
+                    ['blue', 'green', 'orange', 'red', 'purple', 'brown', 'magenta']
                 )):
-                    plt.subplot(1, 6, i+1)
+                    plt.subplot(1, 7, i+1)
                     plt.plot(steps_list, data, color=color)
+                    if title == 'Peak VRAM (GB)' and len(vram_reserved_list) > 0:
+                        plt.plot(steps_list, vram_reserved_list, color='cyan', linestyle='--', label='Reserved')
+                        plt.legend()
                     plt.title(title)
                     plt.xlabel('Steps')
                 plt.tight_layout()
