@@ -1,5 +1,5 @@
 from transformers import AutoTokenizer
-from pipelines import (
+from pipeline import (
     run_stage1_pretraining,
     run_stage2_midtraining,
     run_stage3_long_context,
