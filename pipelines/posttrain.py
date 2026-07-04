@@ -49,7 +49,8 @@ def run_stage4_sft(model_type, tokenizer, base_dir, stage3_model_path):
 
         trainer = Trainer(
             model=model, args=args, train_dataset=ds,
-            callbacks=[GradientMetricsCallback(log_file=os.path.join(stage4_dir, "training_log.jsonl"), plot_dir=stage4_dir)]
+            # Passed model to callback init
+            callbacks=[GradientMetricsCallback(model=model, log_file=os.path.join(stage4_dir, "training_log.jsonl"), plot_dir=stage4_dir)]
         )
 
         # Robust resumption loop
@@ -130,7 +131,8 @@ def run_stage5_dpo(model_type, tokenizer, base_dir, stage4_model_path):
 
         trainer = DPOTrainer(
             model=model, ref_model=ref_model, args=args, train_dataset=ds, processing_class=tokenizer,
-            callbacks=[GradientMetricsCallback(log_file=os.path.join(stage5_dir, "training_log.jsonl"), plot_dir=stage5_dir)]
+            # Passed model to callback init
+            callbacks=[GradientMetricsCallback(model=model, log_file=os.path.join(stage5_dir, "training_log.jsonl"), plot_dir=stage5_dir)]
         )
 
         # Robust resumption loop

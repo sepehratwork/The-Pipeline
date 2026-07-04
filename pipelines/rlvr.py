@@ -112,6 +112,7 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
         tokens_per_sec_buffer = []  # Accumulate tokens per sec for averaging across accumulation steps
         vram_allocated_list = []
         vram_reserved_list = []
+        learning_rates = []  # Captured Learning Rate List
         total_flops = 0
 
         if os.path.exists(log_file):
@@ -128,6 +129,7 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
                         tokens_per_sec_list.append(data.get('tokens_per_sec', 0.0))
                         vram_allocated_list.append(data.get('vram_allocated', 0.0))
                         vram_reserved_list.append(data.get('vram_reserved', 0.0))
+                        learning_rates.append(data.get('learning_rate', 0.0))
                         total_flops = data.get('flops', 0)
 
         # Set training mode first
@@ -305,6 +307,12 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
                 else:
                     optimizer.step()
 
+                # Get learning rate from optimizer
+                lr = 0.0
+                for param_group in optimizer.param_groups:
+                    lr = param_group.get('lr', 0.0)
+                    break
+
                 optimizer.zero_grad(set_to_none=True)
 
                 # Average the tokens per second throughput over the accumulation step
@@ -326,6 +334,7 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
                 tokens_per_sec_list.append(avg_tokens_per_sec)
                 vram_allocated_list.append(vram_allocated)
                 vram_reserved_list.append(vram_reserved)
+                learning_rates.append(lr)
 
                 with open(log_file, 'a') as f:
                     f.write(json.dumps({
@@ -337,20 +346,21 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
                         'flops': total_flops,
                         'tokens_per_sec': avg_tokens_per_sec,
                         'vram_allocated': vram_allocated,
-                        'vram_reserved': vram_reserved
+                        'vram_reserved': vram_reserved,
+                        'learning_rate': lr
                     }) + '\n')
 
-                # Render metrics over 7 subplot panels (Added Peak VRAM)
-                plt.figure(figsize=(35, 5))
+                # Render metrics over 8 subplot panels (Added Learning Rate)
+                plt.figure(figsize=(40, 5))
                 for i, (data, title, color) in enumerate(zip(
-                    [variances, entropies, means, losses, flops_list, tokens_per_sec_list, vram_allocated_list],
-                    ['Gradient Variance', 'Gradient Entropy', 'Gradient Mean', 'Training Loss', 'Cumulative FLOPs', 'Inference Tokens/sec', 'Peak VRAM (GB)'],
-                    ['blue', 'green', 'orange', 'red', 'purple', 'brown', 'magenta']
+                    [variances, entropies, means, losses, flops_list, tokens_per_sec_list, vram_allocated_list, learning_rates],
+                    ['Gradient Variance', 'Gradient Entropy', 'Gradient Mean', 'Training Loss', 'Cumulative FLOPs', 'Inference Tokens/sec', 'Peak VRAM (GB)', 'Learning Rate'],
+                    ['blue', 'green', 'orange', 'red', 'purple', 'brown', 'magenta', 'cyan']
                 )):
-                    plt.subplot(1, 7, i+1)
+                    plt.subplot(1, 8, i+1)
                     plt.plot(steps_list, data, color=color)
                     if title == 'Peak VRAM (GB)' and len(vram_reserved_list) > 0:
-                        plt.plot(steps_list, vram_reserved_list, color='cyan', linestyle='--', label='Reserved')
+                        plt.plot(steps_list, vram_reserved_list, color='purple', linestyle='--', label='Reserved')
                         plt.legend()
                     plt.title(title)
                     plt.xlabel('Steps')

@@ -57,7 +57,8 @@ def _run_pretrain_stage(stage_name, model_type, tokenizer, dataset_path, seq_len
             model=model,
             args=args,
             train_dataset=ds,
-            callbacks=[GradientMetricsCallback(log_file=os.path.join(output_dir, "training_log.jsonl"), plot_dir=output_dir)]
+            # Passed model to callback init
+            callbacks=[GradientMetricsCallback(model=model, log_file=os.path.join(output_dir, "training_log.jsonl"), plot_dir=output_dir)]
         )
         
         # Robust resumption loop

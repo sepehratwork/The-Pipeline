@@ -72,12 +72,16 @@ class StageTimer:
 
 
 class GradientMetricsCallback(TrainerCallback):
-    def __init__(self, log_file, plot_dir):
+    def __init__(self, log_file, plot_dir, model=None):
+        self.model = model
+        self.optimizer = None
         self.log_file = log_file
         self.plot_dir = plot_dir
+        
         self.steps, self.variances, self.entropies, self.means, self.losses, self.flops = [], [], [], [], [], []
         self.vram_allocated = []
         self.vram_reserved = []
+        self.learning_rates = []  # List to collect learning rates
         os.makedirs(self.plot_dir, exist_ok=True)
 
         # Temporary variables to store gradient metrics calculated right after backward (before optimizer.zero_grad())
@@ -98,23 +102,43 @@ class GradientMetricsCallback(TrainerCallback):
                         self.flops.append(data.get('flops', 0))
                         self.vram_allocated.append(data.get('vram_allocated', 0.0))
                         self.vram_reserved.append(data.get('vram_reserved', 0.0))
+                        self.learning_rates.append(data.get('learning_rate', 0.0))
                 f.close()
 
-    def on_train_begin(self, args, state, control, **kwargs):
+    def on_train_begin(self, args, state, control, model=None, optimizer=None, **kwargs):
         """
-        Resets peak memory stats at the start of training.
+        Resets peak memory stats and hooks key training items.
         """
         if torch.cuda.is_available():
             torch.cuda.reset_peak_memory_stats()
+            
+        if model is not None:
+            self.model = model
+            
+        if optimizer is not None:
+            self.optimizer = optimizer
+            self._hook_optimizer(optimizer)
 
-    def on_substep_end(self, args, state, control, model=None, **kwargs):
-        """
-        Calculates gradient metrics right after backward is performed but before the gradients are cleared.
-        """
-        if model is None:
+    def _hook_optimizer(self, optimizer):
+        # Prevent double-hooking the optimizer during resumptions
+        if hasattr(optimizer, '_is_gradient_metrics_hooked') and optimizer._is_gradient_metrics_hooked:
             return
+            
+        original_step = optimizer.step
+        
+        def hooked_step(*args, **kwargs):
+            # Capture the gradient metrics right before weights are updated and gradients are cleared
+            if hasattr(self, 'model') and self.model is not None:
+                self._calculate_and_store_gradients(self.model)
+            return original_step(*args, **kwargs)
+            
+        optimizer.step = hooked_step
+        optimizer._is_gradient_metrics_hooked = True
 
-        # Vectorized extraction of gradients for efficiency
+    def _calculate_and_store_gradients(self, model):
+        """
+        Calculates gradient metrics right after backward but before zeroing.
+        """
         grads = [p.grad.view(-1).float() for p in model.parameters() if p.grad is not None]
         if not grads:
             return
@@ -139,15 +163,26 @@ class GradientMetricsCallback(TrainerCallback):
             self._temp_var = var
             self._temp_entropy = entropy
 
+    def on_substep_end(self, args, state, control, model=None, **kwargs):
+        """
+        Fall-back capture step for gradient accumulation loops where on_substep_end is explicitly run.
+        """
+        if model is None:
+            model = self.model
+        if model is None:
+            return
+
+        self._calculate_and_store_gradients(model)
+
     def on_step_end(self, args, state, control, model=None, **kwargs):
         """
-        Retrieves the cached gradient metrics, measures VRAM usage, writes them to the log, and saves the plot.
+        Retrieves the cached metrics, measures learning rate and VRAM usage, logs them, and saves the plot.
         """
         mean = self._temp_mean
         var = self._temp_var
         entropy = self._temp_entropy
 
-        # Reset temporary variables for the next training step
+        # Reset temporary variables for the next step
         self._temp_mean = 0.0
         self._temp_var = 0.0
         self._temp_entropy = 0.0
@@ -164,6 +199,13 @@ class GradientMetricsCallback(TrainerCallback):
         if torch.cuda.is_available():
             torch.cuda.reset_peak_memory_stats()
 
+        # Extract current learning rate from the active optimizer
+        lr = 0.0
+        if hasattr(self, 'optimizer') and self.optimizer is not None:
+            for param_group in self.optimizer.param_groups:
+                lr = param_group.get('lr', 0.0)
+                break
+
         self.steps.append(step)
         self.variances.append(var)
         self.entropies.append(entropy)
@@ -172,6 +214,7 @@ class GradientMetricsCallback(TrainerCallback):
         self.flops.append(current_flops)
         self.vram_allocated.append(vram_allocated)
         self.vram_reserved.append(vram_reserved)
+        self.learning_rates.append(lr)
 
         with open(self.log_file, 'a') as f:
             f.write(json.dumps({
@@ -182,17 +225,18 @@ class GradientMetricsCallback(TrainerCallback):
                 'loss': loss, 
                 'flops': current_flops,
                 'vram_allocated': vram_allocated,
-                'vram_reserved': vram_reserved
+                'vram_reserved': vram_reserved,
+                'learning_rate': lr
             }) + '\n')
 
-        # Extended plotting with 5 subplots including VRAM allocation and reservation
-        plt.figure(figsize=(25, 4))
+        # Extended plotting with 6 subplots including VRAM and Learning Rate
+        plt.figure(figsize=(30, 4))
         for i, (data, title, color) in enumerate(zip(
-            [self.variances, self.entropies, self.means, self.losses, self.vram_allocated],
-            ['Gradient Variance', 'Gradient Entropy', 'Gradient Mean', 'Training Loss', 'Peak VRAM (GB)'],
-            ['blue', 'green', 'orange', 'red', 'magenta']
+            [self.variances, self.entropies, self.means, self.losses, self.vram_allocated, self.learning_rates],
+            ['Gradient Variance', 'Gradient Entropy', 'Gradient Mean', 'Training Loss', 'Peak VRAM (GB)', 'Learning Rate'],
+            ['blue', 'green', 'orange', 'red', 'magenta', 'cyan']
         )):
-            plt.subplot(1, 5, i+1)
+            plt.subplot(1, 6, i+1)
             plt.plot(self.steps, data, color=color)
             if title == 'Peak VRAM (GB)' and len(self.vram_reserved) > 0:
                 plt.plot(self.steps, self.vram_reserved, color='purple', linestyle='--', label='Reserved')
