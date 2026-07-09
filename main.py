@@ -8,7 +8,7 @@ from pipeline import (
     run_stage5_dpo,
     run_stage6_rlvr
 )
-from pipeline.evaluation import run_olmes_evaluation
+from pipeline.evaluation import evaluate_base_model, evaluate_post_trained_model
 
 def main():
     model_type = "olmo3"
@@ -28,67 +28,37 @@ def main():
 
     pretrain_dir = "../ModelsCheckpoints/OLMo3/Pre-Training"
     posttrain_dir = "../ModelsCheckpoints/OLMo3/Post-Training"
-    eval_dir = "../EvaluationResults"
 
-    # API keys and tokens for OLMES evaluations (retrieved from system environment)
-    openai_api_key = os.environ.get("OPENAI_API_KEY")
-    hf_token = os.environ.get("HF_TOKEN")
+    # Ensure report directory exists
+    os.makedirs("reports", exist_ok=True)
 
-    # Pre-training Stages
+    # ==========================================
+    # Pre-training Stages & OLMES Evaluation
+    # ==========================================
+    
     stage1_model = run_stage1_pretraining(model_type, tokenizer, pretrain_dir)
-    run_olmes_evaluation(
-        model_path=stage1_model, 
-        output_dir=os.path.join(eval_dir, "Stage1_Pretraining"), 
-        stage="pretraining",
-        openai_api_key=openai_api_key,
-        hf_token=hf_token
-    )
+    evaluate_base_model(stage1_model, tokenizer, "reports/Stage1_Pretraining")
 
     stage2_model = run_stage2_midtraining(model_type, tokenizer, pretrain_dir, stage1_model)
-    run_olmes_evaluation(
-        model_path=stage2_model, 
-        output_dir=os.path.join(eval_dir, "Stage2_Midtraining"), 
-        stage="midtraining",
-        openai_api_key=openai_api_key,
-        hf_token=hf_token
-    )
+    evaluate_base_model(stage2_model, tokenizer, "reports/Stage2_Midtraining")
 
     stage3_model = run_stage3_long_context(model_type, tokenizer, pretrain_dir, stage2_model)
-    run_olmes_evaluation(
-        model_path=stage3_model, 
-        output_dir=os.path.join(eval_dir, "Stage3_LongContext"), 
-        stage="long_context",
-        openai_api_key=openai_api_key,
-        hf_token=hf_token
-    )
+    evaluate_base_model(stage3_model, tokenizer, "reports/Stage3_LongContext")
 
-    # Post-training Stages
+    # ==========================================
+    # Post-training Stages & OLMo 3 Evaluation
+    # ==========================================
+    
     stage4_model = run_stage4_sft(model_type, tokenizer, posttrain_dir, stage3_model)
-    run_olmes_evaluation(
-        model_path=stage4_model, 
-        output_dir=os.path.join(eval_dir, "Stage4_SFT"), 
-        stage="sft",
-        openai_api_key=openai_api_key,
-        hf_token=hf_token
-    )
+    evaluate_post_trained_model(stage4_model, tokenizer, "reports/Stage4_SFT")
 
     stage5_model = run_stage5_dpo(model_type, tokenizer, posttrain_dir, stage4_model)
-    run_olmes_evaluation(
-        model_path=stage5_model, 
-        output_dir=os.path.join(eval_dir, "Stage5_DPO"), 
-        stage="dpo",
-        openai_api_key=openai_api_key,
-        hf_token=hf_token
-    )
+    evaluate_post_trained_model(stage5_model, tokenizer, "reports/Stage5_DPO")
 
     stage6_model = run_stage6_rlvr(model_type, tokenizer, posttrain_dir, stage5_model)
-    run_olmes_evaluation(
-        model_path=stage6_model, 
-        output_dir=os.path.join(eval_dir, "Stage6_RLVR"), 
-        stage="rlvr",
-        openai_api_key=openai_api_key,
-        hf_token=hf_token
-    )
+    evaluate_post_trained_model(stage6_model, tokenizer, "reports/Stage6_RLVR")
+
+    print("Pipeline and all evaluations completed successfully!")
 
 if __name__ == "__main__":
     main()

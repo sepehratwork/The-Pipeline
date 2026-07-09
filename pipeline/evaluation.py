@@ -1,171 +1,165 @@
 import os
-import sys
-import json
-import subprocess
-import logging
+import pandas as pd
+import torch
+from dotenv import load_dotenv
+import lm_eval
+from google import genai
+import re
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger(__name__)
+# Load environment variables from .env file
+load_dotenv()
 
-def run_subprocess(cmd, env=None):
-    """
-    Helper function to execute shell commands and print logs in real-time.
-    """
-    logger.info(f"Running evaluation command: {' '.join(cmd)}")
-    try:
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            env=env
-        )
-        for line in process.stdout:
-            print(line, end="")
-        process.wait()
-        if process.returncode != 0:
-            logger.error(f"OLMES Command failed with exit code {process.returncode}")
-            return False
-        logger.info("OLMES Command executed successfully.")
-        return True
-    except Exception as e:
-        logger.error(f"Error during OLMES command execution: {e}")
-        return False
-
-def run_olmes_evaluation(
-    model_path: str,
-    output_dir: str,
-    stage: str,
-    use_vllm: bool = True,
-    openai_api_key: str = None,
-    hf_token: str = None,
-    extra_args: list = None
-):
-    """
-    Launches standard OLMES evaluation configurations matching the current model stage.
+# ---------------------------------------------------------
+# OLMES Base Evaluation (Stages 1, 2, 3)
+# ---------------------------------------------------------
+def evaluate_base_model(model_path, tokenizer, stage_name):
+    print(f"--- Starting OLMES Base Evaluation for {stage_name} ---")
     
-    Args:
-        model_path (str): Path to the saved Hugging Face model checkpoint directory or Hub ID.
-        output_dir (str): Directory where the OLMES metrics and outputs will be written.
-        stage (str): The current training stage ('pretraining', 'midtraining', 'long_context', 
-                     'sft', 'dpo', or 'rlvr').
-        use_vllm (bool): Flag to utilize vLLM backend for faster inference during evaluation.
-        openai_api_key (str): OpenAI API key required for LLM-as-a-judge (e.g. SimpleQA, AlpacaEval).
-        hf_token (str): Hugging Face authentication token for safety models or gated datasets.
-        extra_args (list): Additional CLI arguments to append to the command.
-    """
-    if not model_path or not os.path.exists(model_path):
-        logger.warning(f"Model path {model_path} does not exist. Skipping evaluation.")
-        return False
-
-    os.makedirs(output_dir, exist_ok=True)
+    # The 10 tasks defined in the OLMES paper
+    olmes_tasks = [
+        "arc_challenge", "arc_easy", "boolq", "hellaswag", 
+        "mmlu", "openbookqa", "piqa", "social_iqa", 
+        "winogrande", "commonsense_qa"
+    ]
     
-    env = os.environ.copy()
-    if openai_api_key:
-        env["OPENAI_API_KEY"] = openai_api_key
-    if hf_token:
-        env["HF_TOKEN"] = hf_token
-        env["HF_AUTH_TOKEN"] = hf_token
-
-    logger.info(f"Starting OLMES evaluation process for stage '{stage}' at path: {model_path}")
+    # Initialize lm_eval model wrapper
+    # Assuming model_path is a HuggingFace model object or path
+    model_args = f"pretrained={model_path}" if isinstance(model_path, str) else model_path
     
-    is_base_model = stage in ["pretraining", "midtraining", "long_context"]
-    is_instruct_model = stage in ["sft", "dpo", "rlvr"]
-    success = True
-
-    if is_base_model:
-        # standard base evaluation benchmarks for OLMo 3
-        tasks = [
-            # Base Easy Suite (small-scale proxy metrics)
-            "olmo3:base_easy:code_bpb",
-            "olmo3:base_easy:math_bpb",
-            "olmo3:base_easy:qa_rc",
-            "olmo3:base_easy:qa_bpb",
-            # Base Main Suite (full evaluation)
-            "olmo3:base:stem_qa_mc",
-            "olmo3:base:nonstem_qa_mc",
-            "olmo3:base:gen",
-            "olmo3:base:math",
-            "olmo3:base:code",
-            "olmo3:base:code_fim",
-            # Base Held-out Suite
-            "olmo3:heldout"
-        ]
-
-        cmd = [
-            "olmes",
-            "--model", model_path,
-            "--output-dir", output_dir,
-            "--task"
-        ] + tasks
-
-        if use_vllm:
-            cmd += ["--model-type", "vllm"]
-            
-        if extra_args:
-            cmd += extra_args
-
-        success = success and run_subprocess(cmd, env=env)
-
-    elif is_instruct_model:
-        # standard post-training evaluation benchmarks for OLMo 3 instruct models
-        tasks_adapt = ["olmo3:adapt"]
-        cmd_adapt = [
-            "olmes",
-            "--model", model_path,
-            "--output-dir", output_dir,
-            "--task"
-        ] + tasks_adapt
-
-        if use_vllm:
-            cmd_adapt += ["--model-type", "vllm"]
-            
-        if extra_args:
-            cmd_adapt += extra_args
-
-        success = success and run_subprocess(cmd_adapt, env=env)
-
-        # Safety evaluation using hf-safety-eval as the reference model
-        max_length = 32768 if stage == "rlvr" else 2048
-        max_gen_toks = 32768 if stage == "rlvr" else 2048
-
-        task_args = {
-            "generation_kwargs": {
-                "max_gen_toks": max_gen_toks,
-                "truncate_context": False
-            }
-        }
-
-        model_args = {
-            "model_path": model_path,
-            "max_length": max_length,
-            "trust_remote_code": True
-        }
-        if stage == "rlvr":
-            model_args["process_output"] = "r1_style"
-
-        cmd_safety = [
-            "oe-eval",
-            "--model", "hf-safety-eval",
-            "--task", "safety::olmo3",
-            "--task-args", json.dumps(task_args),
-            "--model-args", json.dumps(model_args),
-            "--output-dir", output_dir
-        ]
+    print(f"Running lm_eval for tasks: {olmes_tasks}")
+    results = lm_eval.simple_evaluate(
+        model="hf",
+        model_args=model_args,
+        tasks=olmes_tasks,
+        num_fewshot=5, # OLMES standardizes on 5-shot for most tasks
+        batch_size="auto",
+        device="cuda" if torch.cuda.is_available() else "cpu"
+    )
+    
+    # Extract metrics
+    metrics = []
+    for task_name, task_results in results['results'].items():
+        # OLMES takes the max of MCF (acc) and CF (acc_norm) where applicable
+        acc = task_results.get('acc,none', task_results.get('acc'))
+        acc_norm = task_results.get('acc_norm,none', task_results.get('acc_norm'))
         
-        if extra_args:
-            cmd_safety += extra_args
+        best_score = max(acc if acc is not None else 0, acc_norm if acc_norm is not None else 0)
+        
+        metrics.append({
+            "Stage": stage_name,
+            "Task": task_name,
+            "Accuracy": acc,
+            "Accuracy_Norm": acc_norm,
+            "OLMES_Score (Max)": best_score
+        })
+    
+    # Generate Report
+    df = pd.DataFrame(metrics)
+    report_path = f"{stage_name}_OLMES_report.csv"
+    df.to_csv(report_path, index=False)
+    print(f"Saved Base Evaluation Report to {report_path}\n")
+    return df
 
-        success = success and run_subprocess(cmd_safety, env=env)
+# ---------------------------------------------------------
+# OLMo 3 Post-Training Evaluation (Stages 4, 5, 6)
+# ---------------------------------------------------------
+def gemini_llm_judge(prompt, model_response):
+    """Uses Gemini 3.5 Flash to judge open-ended chat responses."""
+    client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+    
+    generation_config = {
+        'max_output_tokens': 65536,
+        'thinking_level': 'medium',
+    }
+    
+    judge_prompt = (
+        "You are an impartial judge evaluating an AI assistant's response.\n"
+        f"User Prompt: {prompt}\n"
+        f"AI Response: {model_response}\n\n"
+        "Evaluate the response for helpfulness, accuracy, and instruction-following. "
+        "Provide a brief reasoning, then score the response from 1 to 10. "
+        "Format your output exactly as: 'SCORE: X' at the very end."
+    )
+    
+    try:
+        interaction = client.interactions.create(
+            model='models/gemini-3.5-flash',
+            input=judge_prompt,
+            generation_config=generation_config,
+        )
+        output = interaction.output_text
+        
+        # Extract score using regex
+        score_match = re.search(r"SCORE:\s*([0-9]+(?:\.[0-9]+)?)", output)
+        score = float(score_match.group(1)) if score_match else 0.0
+        return score, output
+    except Exception as e:
+        print(f"Gemini API Error: {e}")
+        return 0.0, str(e)
 
-    else:
-        logger.error(f"Unrecognized OLMo 3 stage: '{stage}'. Unable to execute OLMES tasks.")
-        return False
+def evaluate_post_trained_model(model, tokenizer, stage_name):
+    print(f"--- Starting OLMo 3 Post-Training Evaluation for {stage_name} ---")
+    
+    # 1. Standard Generative Tasks (Math, Code, Reasoning) via lm_eval
+    post_train_tasks = ["gsm8k", "mathqa", "ifeval"]
+    
+    model_args = f"pretrained={model}" if isinstance(model, str) else model
+    print(f"Running lm_eval for generative tasks: {post_train_tasks}")
+    
+    results = lm_eval.simple_evaluate(
+        model="hf",
+        model_args=model_args,
+        tasks=post_train_tasks,
+        num_fewshot=0,
+        batch_size="auto",
+        device="cuda" if torch.cuda.is_available() else "cpu"
+    )
+    
+    metrics = []
+    for task_name, task_results in results['results'].items():
+        metrics.append({
+            "Stage": stage_name,
+            "Task": task_name,
+            "Score": task_results.get('exact_match,none', task_results.get('acc,none', 0))
+        })
 
-    if success:
-        logger.info(f"OLMES evaluation for {model_path} successfully completed.")
-    else:
-        logger.warning(f"One or more OLMES evaluations failed for model: {model_path}.")
-
-    return success
+    # 2. Chat & Instruction Following Evaluation (LLM-as-a-Judge via Gemini)
+    print("Running LLM-as-a-Judge Chat Evaluation using Gemini 3.5 Flash...")
+    
+    # Sample prompts representing AlpacaEval / WildChat style queries
+    chat_prompts = [
+        "Explain the theory of relativity to a 5-year-old.",
+        "Write a Python script to reverse a linked list.",
+        "What are the main causes of the French Revolution?"
+    ]
+    
+    chat_scores = []
+    for prompt in chat_prompts:
+        # Format prompt using the tokenizer's chat template
+        messages = [{"role": "user", "content": prompt}]
+        formatted_prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        
+        # Generate response (Assuming 'model' is a loaded HF model here; adjust if passing paths)
+        inputs = tokenizer(formatted_prompt, return_tensors="pt").to(model.device)
+        with torch.no_grad():
+            outputs = model.generate(**inputs, max_new_tokens=512, temperature=0.6, top_p=0.95)
+        
+        response_text = tokenizer.decode(outputs[0][inputs['input_ids'].shape[1]:], skip_special_tokens=True)
+        
+        # Judge with Gemini
+        score, reasoning = gemini_llm_judge(prompt, response_text)
+        chat_scores.append(score)
+    
+    avg_chat_score = sum(chat_scores) / len(chat_scores) if chat_scores else 0
+    metrics.append({
+        "Stage": stage_name,
+        "Task": "alpaca_eval_gemini_judge",
+        "Score": avg_chat_score
+    })
+    
+    # Generate Report
+    df = pd.DataFrame(metrics)
+    report_path = f"{stage_name}_PostTrain_report.csv"
+    df.to_csv(report_path, index=False)
+    print(f"Saved Post-Training Evaluation Report to {report_path}\n")
+    return df

@@ -6,3 +6,7 @@ accelerate
 pandas
 matplotlib
 tqdm
+python-dotenv
+pandas
+lm-eval
+google-genai
