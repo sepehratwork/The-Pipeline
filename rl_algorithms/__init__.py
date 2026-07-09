@@ -1,5 +1,4 @@
 from .base import RLAlgorithm
-from .ppo import PPOAlgorithm
 from .grpo import GRPOAlgorithm
 from .gspo import GSPOAlgorithm
 from .dapo import DAPOAlgorithm
@@ -8,7 +7,6 @@ from .cispo import CISPOAlgorithm
 
 
 RL_ALGO_REGISTRY = {
-    "ppo": PPOAlgorithm,
     "grpo": GRPOAlgorithm,
     "gspo": GSPOAlgorithm,
     "dapo": DAPOAlgorithm,
