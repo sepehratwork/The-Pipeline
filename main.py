@@ -11,6 +11,11 @@ from pipeline import (
 from pipeline.evaluation import evaluate_base_model, evaluate_post_trained_model
 
 def main():
+    # --- CONFIGURATION ---
+    # Choose your LLM Judge API here: "gemini" or "cloudflare"
+    JUDGE_API_CHOICE = "cloudflare" 
+    # ---------------------
+
     model_type = "olmo3"
     tokenizer = AutoTokenizer.from_pretrained("allenai/OLMo-2-1124-7B", trust_remote_code=True)
     if tokenizer.pad_token is None:
@@ -50,13 +55,13 @@ def main():
     # ==========================================
     
     stage4_model = run_stage4_sft(model_type, tokenizer, posttrain_dir, stage3_model)
-    evaluate_post_trained_model(stage4_model, tokenizer, "reports/Stage4_SFT")
+    evaluate_post_trained_model(stage4_model, tokenizer, "reports/Stage4_SFT", judge_api=JUDGE_API_CHOICE)
 
     stage5_model = run_stage5_dpo(model_type, tokenizer, posttrain_dir, stage4_model)
-    evaluate_post_trained_model(stage5_model, tokenizer, "reports/Stage5_DPO")
+    evaluate_post_trained_model(stage5_model, tokenizer, "reports/Stage5_DPO", judge_api=JUDGE_API_CHOICE)
 
     stage6_model = run_stage6_rlvr(model_type, tokenizer, posttrain_dir, stage5_model)
-    evaluate_post_trained_model(stage6_model, tokenizer, "reports/Stage6_RLVR")
+    evaluate_post_trained_model(stage6_model, tokenizer, "reports/Stage6_RLVR", judge_api=JUDGE_API_CHOICE)
 
     print("Pipeline and all evaluations completed successfully!")
 
