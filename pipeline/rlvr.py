@@ -113,6 +113,8 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
         vram_allocated_list = []
         vram_reserved_list = []
         learning_rates = []  # Captured Learning Rate List
+        cot_lengths_list = []  # Captured Step-Averaged CoT Length List
+        cot_lengths_buffer = []  # Accumulate CoT lengths for averaging across accumulation steps
         total_flops = 0
 
         if os.path.exists(log_file):
@@ -130,6 +132,7 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
                         vram_allocated_list.append(data.get('vram_allocated', 0.0))
                         vram_reserved_list.append(data.get('vram_reserved', 0.0))
                         learning_rates.append(data.get('learning_rate', 0.0))
+                        cot_lengths_list.append(data.get('cot_length', 0.0))
                         total_flops = data.get('flops', 0)
 
         # Set training mode first
@@ -178,6 +181,25 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
             
             prompt_len = input_ids.size(1)
             decoded_completions = tokenizer.batch_decode(completions, skip_special_tokens=True)
+
+            # Calculate and store CoT lengths for this step's generated episodes
+            step_cot_lengths = []
+            for comp in decoded_completions:
+                if "<think>" in comp and "</think>" in comp:
+                    start_idx = comp.find("<think>") + len("<think>")
+                    end_idx = comp.find("</think>", start_idx)
+                    if end_idx != -1:
+                        cot_text = comp[start_idx:end_idx]
+                        # Measure sequence length using token count from the tokenizer
+                        cot_len = len(tokenizer.encode(cot_text, add_special_tokens=False))
+                    else:
+                        cot_len = 0
+                else:
+                    cot_len = 0
+                step_cot_lengths.append(cot_len)
+            
+            avg_cot_step = sum(step_cot_lengths) / len(step_cot_lengths) if step_cot_lengths else 0.0
+            cot_lengths_buffer.append(avg_cot_step)
 
             rewards = []
             for comp in decoded_completions:
@@ -319,6 +341,10 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
                 avg_tokens_per_sec = sum(tokens_per_sec_buffer) / len(tokens_per_sec_buffer) if tokens_per_sec_buffer else 0.0
                 tokens_per_sec_buffer = []
 
+                # Average the CoT length over the accumulation step
+                avg_cot_len = sum(cot_lengths_buffer) / len(cot_lengths_buffer) if cot_lengths_buffer else 0.0
+                cot_lengths_buffer = []
+
                 # Capture peak VRAM consumption since last reset
                 vram_allocated = torch.cuda.max_memory_allocated() / (1024 ** 3) if torch.cuda.is_available() else 0.0
                 vram_reserved = torch.cuda.max_memory_reserved() / (1024 ** 3) if torch.cuda.is_available() else 0.0
@@ -335,6 +361,7 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
                 vram_allocated_list.append(vram_allocated)
                 vram_reserved_list.append(vram_reserved)
                 learning_rates.append(lr)
+                cot_lengths_list.append(avg_cot_len)
 
                 with open(log_file, 'a') as f:
                     f.write(json.dumps({
@@ -347,17 +374,18 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
                         'tokens_per_sec': avg_tokens_per_sec,
                         'vram_allocated': vram_allocated,
                         'vram_reserved': vram_reserved,
-                        'learning_rate': lr
+                        'learning_rate': lr,
+                        'cot_length': avg_cot_len
                     }) + '\n')
 
-                # Render metrics over 8 subplot panels (Added Learning Rate)
-                plt.figure(figsize=(40, 5))
+                # Render metrics over 9 subplot panels (Added Learning Rate & CoT Length)
+                plt.figure(figsize=(45, 5))
                 for i, (data, title, color) in enumerate(zip(
-                    [variances, entropies, means, losses, flops_list, tokens_per_sec_list, vram_allocated_list, learning_rates],
-                    ['Gradient Variance', 'Gradient Entropy', 'Gradient Mean', 'Training Loss', 'Cumulative FLOPs', 'Inference Tokens/sec', 'Peak VRAM (GB)', 'Learning Rate'],
-                    ['blue', 'green', 'orange', 'red', 'purple', 'brown', 'magenta', 'cyan']
+                    [variances, entropies, means, losses, flops_list, tokens_per_sec_list, vram_allocated_list, learning_rates, cot_lengths_list],
+                    ['Gradient Variance', 'Gradient Entropy', 'Gradient Mean', 'Training Loss', 'Cumulative FLOPs', 'Inference Tokens/sec', 'Peak VRAM (GB)', 'Learning Rate', 'CoT Length (Tokens)'],
+                    ['blue', 'green', 'orange', 'red', 'purple', 'brown', 'magenta', 'cyan', 'olive']
                 )):
-                    plt.subplot(1, 8, i+1)
+                    plt.subplot(1, 9, i+1)
                     plt.plot(steps_list, data, color=color)
                     if title == 'Peak VRAM (GB)' and len(vram_reserved_list) > 0:
                         plt.plot(steps_list, vram_reserved_list, color='purple', linestyle='--', label='Reserved')
