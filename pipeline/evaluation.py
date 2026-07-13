@@ -23,7 +23,7 @@ def evaluate_base_model(model_path, tokenizer, stage_name):
         "winogrande", "commonsense_qa"
     ]
     
-    model_args = f"pretrained={model_path}" if isinstance(model_path, str) else model_path
+    model_args = f"pretrained={model_path},trust_remote_code=True" if isinstance(model_path, str) else model_path
     
     print(f"Running lm_eval for tasks: {olmes_tasks}")
     results = lm_eval.simple_evaluate(
@@ -147,7 +147,7 @@ def evaluate_post_trained_model(model, tokenizer, stage_name, judge_api="gemini"
     # 1. Standard Generative Tasks (Math, Code, Reasoning) via lm_eval
     post_train_tasks = ["gsm8k", "mathqa", "ifeval"]
     
-    model_args = f"pretrained={model}" if isinstance(model, str) else model
+    model_args = f"pretrained={model},trust_remote_code=True" if isinstance(model, str) else model
     print(f"Running lm_eval for generative tasks: {post_train_tasks}")
     
     results = lm_eval.simple_evaluate(
