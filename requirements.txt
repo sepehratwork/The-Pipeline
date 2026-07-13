@@ -10,3 +10,6 @@ python-dotenv
 pandas
 lm-eval
 google-genai
+sentencepiece
+tiktoken
+"transformers[sentencepiece]"
