@@ -12,4 +12,4 @@ lm-eval
 google-genai
 sentencepiece
 tiktoken
-"transformers[sentencepiece]"
+transformers[sentencepiece]
