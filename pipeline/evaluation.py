@@ -4,11 +4,60 @@ import torch
 import requests
 from dotenv import load_dotenv
 import lm_eval
+from lm_eval.models.huggingface import HFLM  # Wrap HF models correctly
 from google import genai
 import re
+from transformers import AutoModelForCausalLM
 
 # Load environment variables from .env file
 load_dotenv()
+
+# Enable arbitrary Python execution safely for evaluation tasks (e.g., HumanEval)
+os.environ["HF_ALLOW_CODE_EVAL"] = "1"
+
+# ---------------------------------------------------------
+# Robust Metric Extraction Helper
+# ---------------------------------------------------------
+def get_best_metric(task_results):
+    """
+    Extracts the primary/best performance metric score from a task results dictionary.
+    Handles variations in metric naming across different versions of lm_eval.
+    """
+    # Priority list of metric keys representing accuracy, exact match, or pass rate
+    metric_keys = [
+        'acc,none', 'acc', 
+        'acc_norm,none', 'acc_norm', 
+        'exact_match,none', 'exact_match',
+        'pass@1,none', 'pass@1',
+        'acc_pmi,none', 'acc_pmi',
+        'acc_mutual_info,none',
+        'f1,none', 'f1'
+    ]
+    
+    for key in metric_keys:
+        val = task_results.get(key)
+        if val is not None:
+            try:
+                return float(val)
+            except (ValueError, TypeError):
+                pass
+                
+    # Fallback: scan all keys for common matching terms
+    for k, v in task_results.items():
+        if any(substring in k.lower() for substring in ['acc', 'exact', 'match', 'score', 'pass']):
+            try:
+                return float(v)
+            except (ValueError, TypeError):
+                pass
+                
+    # Ultimate fallback: return the first numerical value found
+    for k, v in task_results.items():
+        try:
+            return float(v)
+        except (ValueError, TypeError):
+            pass
+            
+    return 0.0
 
 # ---------------------------------------------------------
 # OLMES Base Evaluation (Stages 1, 2, 3)
@@ -16,33 +65,37 @@ load_dotenv()
 def evaluate_base_model(model_path, tokenizer, stage_name):
     print(f"--- Starting OLMES Base Evaluation for {stage_name} ---")
     
-    # The 10 tasks defined in the OLMES paper
+    # Complete 10 standard tasks defined in the OLMES paper
     olmes_tasks = [
         "arc_challenge", "arc_easy", "boolq", "hellaswag", 
         "mmlu", "openbookqa", "piqa", "social_iqa", 
         "winogrande", "commonsense_qa"
     ]
     
-    model_args = f"pretrained={model_path},trust_remote_code=True" if isinstance(model_path, str) else model_path
+    # Initialize the model wrapper and provide the pre-configured tokenizer
+    # HFLM automatically supports both string paths and preloaded model objects
+    print("Wrapping model in HFLM wrapper with pre-configured tokenizer...")
+    lm_obj = HFLM(
+        pretrained=model_path,
+        tokenizer=tokenizer,
+        trust_remote_code=True,
+        device="cuda" if torch.cuda.is_available() else "cpu"
+    )
     
     print(f"Running lm_eval for tasks: {olmes_tasks}")
     results = lm_eval.simple_evaluate(
-        model="hf",
-        model_args=model_args,
+        model=lm_obj,
         tasks=olmes_tasks,
-        num_fewshot=5, # OLMES standardizes on 5-shot for most tasks
-        batch_size="auto",
+        num_fewshot=5,  # OLMES standardizes on 5-shot for most tasks
         device="cuda" if torch.cuda.is_available() else "cpu"
     )
     
     # Extract metrics
     metrics = []
     for task_name, task_results in results['results'].items():
-        # OLMES takes the max of MCF (acc) and CF (acc_norm) where applicable
+        best_score = get_best_metric(task_results)
         acc = task_results.get('acc,none', task_results.get('acc'))
         acc_norm = task_results.get('acc_norm,none', task_results.get('acc_norm'))
-        
-        best_score = max(acc if acc is not None else 0, acc_norm if acc_norm is not None else 0)
         
         metrics.append({
             "Stage": stage_name,
@@ -123,7 +176,6 @@ def cloudflare_llm_judge(prompt, model_response):
         response.raise_for_status()
         result = response.json()
         
-        # Extract the text response from Cloudflare's JSON structure
         output = result.get("result", {}).get("response", "")
         
         score_match = re.search(r"SCORE:\s*([0-9]+(?:\.[0-9]+)?)", output)
@@ -138,33 +190,38 @@ def cloudflare_llm_judge(prompt, model_response):
 # ---------------------------------------------------------
 def evaluate_post_trained_model(model, tokenizer, stage_name, judge_api="gemini"):
     """
-    Evaluates post-trained models. 
+    Evaluates post-trained models on mathematical, instruction following, and coding capabilities.
     judge_api can be either 'gemini' or 'cloudflare'.
     """
     print(f"--- Starting OLMo 3 Post-Training Evaluation for {stage_name} ---")
     print(f"Using LLM Judge API: {judge_api.upper()}")
     
-    # 1. Standard Generative Tasks (Math, Code, Reasoning) via lm_eval
-    post_train_tasks = ["gsm8k", "mathqa", "ifeval"]
+    # Complete core post-training tasks (including MATH and code generation)
+    post_train_tasks = ["gsm8k", "hendrycks_math", "ifeval", "humaneval"]
     
-    model_args = f"pretrained={model},trust_remote_code=True" if isinstance(model, str) else model
+    print("Wrapping model in HFLM wrapper with pre-configured tokenizer...")
+    lm_obj = HFLM(
+        pretrained=model,
+        tokenizer=tokenizer,
+        trust_remote_code=True,
+        device="cuda" if torch.cuda.is_available() else "cpu"
+    )
+    
     print(f"Running lm_eval for generative tasks: {post_train_tasks}")
-    
     results = lm_eval.simple_evaluate(
-        model="hf",
-        model_args=model_args,
+        model=lm_obj,
         tasks=post_train_tasks,
         num_fewshot=0,
-        batch_size="auto",
         device="cuda" if torch.cuda.is_available() else "cpu"
     )
     
     metrics = []
     for task_name, task_results in results['results'].items():
+        score = get_best_metric(task_results)
         metrics.append({
             "Stage": stage_name,
             "Task": task_name,
-            "Score": task_results.get('exact_match,none', task_results.get('acc,none', 0))
+            "Score": score
         })
 
     # 2. Chat & Instruction Following Evaluation (LLM-as-a-Judge)
@@ -176,14 +233,24 @@ def evaluate_post_trained_model(model, tokenizer, stage_name, judge_api="gemini"
         "What are the main causes of the French Revolution?"
     ]
     
+    # Ensure model is ready for local generation (handles string path and PyTorch objects cleanly)
+    generation_model = model
+    if isinstance(model, str):
+        print(f"Loading model from path '{model}' for chat generation...")
+        generation_model = AutoModelForCausalLM.from_pretrained(
+            model, 
+            trust_remote_code=True,
+            torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32
+        ).to("cuda" if torch.cuda.is_available() else "cpu")
+        
     chat_scores = []
     for prompt in chat_prompts:
         messages = [{"role": "user", "content": prompt}]
         formatted_prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         
-        inputs = tokenizer(formatted_prompt, return_tensors="pt").to(model.device)
+        inputs = tokenizer(formatted_prompt, return_tensors="pt").to(generation_model.device)
         with torch.no_grad():
-            outputs = model.generate(**inputs, max_new_tokens=512, temperature=0.6, top_p=0.95)
+            outputs = generation_model.generate(**inputs, max_new_tokens=512, temperature=0.6, top_p=0.95)
         
         response_text = tokenizer.decode(outputs[0][inputs['input_ids'].shape[1]:], skip_special_tokens=True)
         

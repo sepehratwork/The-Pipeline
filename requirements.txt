@@ -13,3 +13,4 @@ google-genai
 sentencepiece
 tiktoken
 transformers[sentencepiece]
+evaluate
