@@ -1,4 +1,12 @@
 import os
+import sys
+
+# Configure HF local cache path before other imports are resolved to guarantee cache safety
+HF_CACHE_DIR = os.path.abspath(os.environ.get("HF_CACHE_DIR", "../test_datasets"))
+os.environ["HF_HOME"] = HF_CACHE_DIR
+os.environ["HF_DATASETS_CACHE"] = os.path.join(HF_CACHE_DIR, "datasets")
+os.environ["HF_HUB_CACHE"] = os.path.join(HF_CACHE_DIR, "hub")
+
 from transformers import AutoTokenizer
 from pipeline import (
     run_stage1_pretraining,
@@ -8,13 +16,20 @@ from pipeline import (
     run_stage5_dpo,
     run_stage6_rlvr
 )
-from pipeline.evaluation import evaluate_base_model, evaluate_post_trained_model
+from pipeline.evaluation import (
+    evaluate_base_model, 
+    evaluate_post_trained_model,
+    pre_download_all_datasets
+)
 
 def main():
     # --- CONFIGURATION ---
     # Choose your LLM Judge API here: "gemini" or "cloudflare"
     JUDGE_API_CHOICE = "cloudflare" 
     # ---------------------
+
+    # 1. Pre-download and cache all datasets locally into the exact specified cache path
+    pre_download_all_datasets()
 
     model_type = "olmo3"
     tokenizer = AutoTokenizer.from_pretrained("allenai/OLMo-2-1124-7B", trust_remote_code=True)
