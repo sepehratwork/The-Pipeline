@@ -159,7 +159,7 @@ def download_and_cache_datasets(stage="base"):
     for path, name in datasets_to_download:
         try:
             print(f"Pre-caching dataset: {path} (config: {name})...")
-            load_dataset(path, name, trust_remote_code=True)
+            load_dataset(path, name)
         except Exception as e:
             print(f"Warning: Cached load skipped for {path} ({e})")
             
