@@ -1,11 +1,11 @@
 import os
 import sys
 
-# Configure HF local cache path before other imports are resolved to guarantee cache safety
-HF_CACHE_DIR = os.path.abspath(os.environ.get("HF_CACHE_DIR", "../test_datasets"))
-os.environ["HF_HOME"] = HF_CACHE_DIR
-os.environ["HF_DATASETS_CACHE"] = os.path.join(HF_CACHE_DIR, "datasets")
-os.environ["HF_HUB_CACHE"] = os.path.join(HF_CACHE_DIR, "hub")
+# # Configure HF local cache path before other imports are resolved to guarantee cache safety
+# HF_CACHE_DIR = os.path.abspath(os.environ.get("HF_CACHE_DIR", "../test_datasets"))
+# os.environ["HF_HOME"] = HF_CACHE_DIR
+# os.environ["HF_DATASETS_CACHE"] = os.path.join(HF_CACHE_DIR, "datasets")
+# os.environ["HF_HUB_CACHE"] = os.path.join(HF_CACHE_DIR, "hub")
 
 from transformers import AutoTokenizer
 from pipeline import (
