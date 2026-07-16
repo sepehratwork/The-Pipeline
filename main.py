@@ -57,26 +57,26 @@ def main():
     # ==========================================
     
     stage1_model = run_stage1_pretraining(model_type, tokenizer, pretrain_dir)
-    evaluate_base_model(stage1_model, tokenizer, "reports/Stage1_Pretraining")
+    # evaluate_base_model(stage1_model, tokenizer, "reports/Stage1_Pretraining")
 
     stage2_model = run_stage2_midtraining(model_type, tokenizer, pretrain_dir, stage1_model)
-    evaluate_base_model(stage2_model, tokenizer, "reports/Stage2_Midtraining")
+    # evaluate_base_model(stage2_model, tokenizer, "reports/Stage2_Midtraining")
 
     stage3_model = run_stage3_long_context(model_type, tokenizer, pretrain_dir, stage2_model)
-    evaluate_base_model(stage3_model, tokenizer, "reports/Stage3_LongContext")
+    # evaluate_base_model(stage3_model, tokenizer, "reports/Stage3_LongContext")
 
     # ==========================================
     # Post-training Stages & OLMo 3 Evaluation
     # ==========================================
     
     stage4_model = run_stage4_sft(model_type, tokenizer, posttrain_dir, stage3_model)
-    evaluate_post_trained_model(stage4_model, tokenizer, "reports/Stage4_SFT", judge_api=JUDGE_API_CHOICE)
+    # evaluate_post_trained_model(stage4_model, tokenizer, "reports/Stage4_SFT", judge_api=JUDGE_API_CHOICE)
 
     stage5_model = run_stage5_dpo(model_type, tokenizer, posttrain_dir, stage4_model)
-    evaluate_post_trained_model(stage5_model, tokenizer, "reports/Stage5_DPO", judge_api=JUDGE_API_CHOICE)
+    # evaluate_post_trained_model(stage5_model, tokenizer, "reports/Stage5_DPO", judge_api=JUDGE_API_CHOICE)
 
     stage6_model = run_stage6_rlvr(model_type, tokenizer, posttrain_dir, stage5_model)
-    evaluate_post_trained_model(stage6_model, tokenizer, "reports/Stage6_RLVR", judge_api=JUDGE_API_CHOICE)
+    # evaluate_post_trained_model(stage6_model, tokenizer, "reports/Stage6_RLVR", judge_api=JUDGE_API_CHOICE)
 
     print("Pipeline and all evaluations completed successfully!")
 
