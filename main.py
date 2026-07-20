@@ -16,11 +16,11 @@ from pipeline import (
     run_stage5_dpo,
     run_stage6_rlvr
 )
-from pipeline.evaluation import (
-    evaluate_base_model, 
-    evaluate_post_trained_model,
-    pre_download_all_datasets
-)
+# from pipeline.evaluation import (
+#     evaluate_base_model, 
+#     evaluate_post_trained_model,
+#     pre_download_all_datasets
+# )
 
 def main():
     # --- CONFIGURATION ---
