@@ -29,7 +29,7 @@ def main():
     # ---------------------
 
     # 1. Pre-download and cache all datasets locally into the exact specified cache path
-    pre_download_all_datasets()
+    # pre_download_all_datasets()
 
     model_type = "olmo3"
     tokenizer = AutoTokenizer.from_pretrained("allenai/OLMo-2-1124-7B", trust_remote_code=True)
