@@ -16,7 +16,7 @@ MODEL_REGISTRY = {
 }
 
 
-def get_model_classes(model_type: str):
-    if model_type not in MODEL_REGISTRY:
-        raise ValueError(f"Model type {model_type} not supported. Available: {list(MODEL_REGISTRY.keys())}")
-    return MODEL_REGISTRY[model_type]
+def get_model_classes(architecture: str):
+    if architecture not in MODEL_REGISTRY:
+        raise ValueError(f"Model type {architecture} not supported. Available: {list(MODEL_REGISTRY.keys())}")
+    return MODEL_REGISTRY[architecture]

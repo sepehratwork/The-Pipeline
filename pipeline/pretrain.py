@@ -6,11 +6,11 @@ from transformers import Trainer, TrainingArguments
 
 from models import get_model_classes
 from data import load_pretrain_phase_dataset
-from utils import GradientMetricsCallback, get_latest_checkpoint, clear_all_checkpoints
+from utils import GradientMetricsCallback, get_latest_checkpoint, clear_all_checkpoints, save_to_hf_hub
 from utils.callbacks import StageTimer
 
 
-def _run_pretrain_stage(stage_name, model_type, tokenizer, dataset_path, seq_len, output_dir, config_kwargs, train_args_kwargs, resume_model_path=None):
+def _run_pretrain_stage(stage_name, architecture, tokenizer, dataset_path, seq_len, output_dir, config_kwargs, train_args_kwargs, resume_model_path=None):
     if not os.path.exists(os.path.join(output_dir, "final_model", "model.safetensors")):
         print(f"=== Starting {stage_name} ===")
         os.makedirs(output_dir, exist_ok=True)
@@ -20,7 +20,7 @@ def _run_pretrain_stage(stage_name, model_type, tokenizer, dataset_path, seq_len
         timer = StageTimer(base_dir)
         start_t = timer.start_stage(stage_name)
         
-        ConfigClass, ModelClass = get_model_classes(model_type)
+        ConfigClass, ModelClass = get_model_classes(architecture)
         
         dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
         
@@ -90,18 +90,18 @@ def _run_pretrain_stage(stage_name, model_type, tokenizer, dataset_path, seq_len
     return os.path.join(output_dir, "final_model")
 
 
-def run_stage1_pretraining(model_type, tokenizer, base_dir):
+def run_stage1_pretraining(architecture, tokenizer, base_dir):
     return _run_pretrain_stage(
-        "Stage 1: Pretraining", model_type, tokenizer, "dolma3_mix-150B-1025", 1024,
+        "Stage 1: Pretraining", architecture, tokenizer, "dolma3_mix-150B-1025", 1024,
         os.path.join(base_dir, "Stage1"),
         {"max_position_embeddings": 8192, "use_yarn": False},
         {"max_steps": 6, "per_device_train_batch_size": 1, "learning_rate": 3.0e-4, "lr_scheduler_type": "cosine", "warmup_steps": 2000, "logging_steps": 1, "save_steps": 2}
     )
 
 
-def run_stage2_midtraining(model_type, tokenizer, base_dir, stage1_model_path):
+def run_stage2_midtraining(architecture, tokenizer, base_dir, stage1_model_path):
     return _run_pretrain_stage(
-        "Stage 2: Midtraining", model_type, tokenizer, "dolma3_dolmino_mix-100B-1125", 1024,
+        "Stage 2: Midtraining", architecture, tokenizer, "dolma3_dolmino_mix-100B-1125", 1024,
         os.path.join(base_dir, "Stage2"),
         {"max_position_embeddings": 8192, "use_yarn": False},
         {"max_steps": 6, "per_device_train_batch_size": 1, "learning_rate": 2.074e-4, "lr_scheduler_type": "linear", "warmup_steps": 0, "logging_steps": 1, "save_steps": 2},
@@ -109,11 +109,17 @@ def run_stage2_midtraining(model_type, tokenizer, base_dir, stage1_model_path):
     )
 
 
-def run_stage3_long_context(model_type, tokenizer, base_dir, stage2_model_path):
-    return _run_pretrain_stage(
-        "Stage 3: Long-context Extension", model_type, tokenizer, "dolma3_longmino_mix-100B-1125", 2048,
+def run_stage3_long_context(architecture, tokenizer, base_dir, stage2_model_path, hf_username=None):
+    stage3_model_path = _run_pretrain_stage(
+        "Stage 3: Long-context Extension", architecture, tokenizer, "dolma3_longmino_mix-100B-1125", 2048,
         os.path.join(base_dir, "Stage3"),
         {"max_position_embeddings": 65536, "use_yarn": True},
         {"max_steps": 6, "per_device_train_batch_size": 1, "learning_rate": 2.074e-4, "lr_scheduler_type": "linear", "warmup_steps": 200, "logging_steps": 1, "save_steps": 2},
         resume_model_path=stage2_model_path
     )
+    
+    # Save model to Hugging Face Hub with format: f"{architecture}_base"
+    repo_name = f"{architecture}_base"
+    save_to_hf_hub(stage3_model_path, tokenizer, repo_name, hf_username=hf_username)
+
+    return stage3_model_path

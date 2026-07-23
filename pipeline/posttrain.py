@@ -12,7 +12,7 @@ from utils import GradientMetricsCallback, get_latest_checkpoint, clear_all_chec
 from utils.callbacks import StageTimer
 
 
-def run_stage4_sft(model_type, tokenizer, base_dir, stage3_model_path):
+def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path):
     stage4_dir = os.path.join(base_dir, "Stage4")
     if not os.path.exists(os.path.join(stage4_dir, "final_model", "model.safetensors")):
         print("=== Starting Stage 4: Supervised Finetuning (SFT) ===")
@@ -22,7 +22,7 @@ def run_stage4_sft(model_type, tokenizer, base_dir, stage3_model_path):
         timer = StageTimer(base_dir)
         start_t = timer.start_stage("Stage 4: Supervised Finetuning (SFT)")
 
-        ConfigClass, ModelClass = get_model_classes(model_type)
+        ConfigClass, ModelClass = get_model_classes(architecture)
         config = ConfigClass.from_pretrained(stage3_model_path)
 
         dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
@@ -81,7 +81,7 @@ def run_stage4_sft(model_type, tokenizer, base_dir, stage3_model_path):
     return os.path.join(stage4_dir, "final_model")
 
 
-def run_stage5_dpo(model_type, tokenizer, base_dir, stage4_model_path):
+def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path):
     stage5_dir = os.path.join(base_dir, "Stage5")
     if not os.path.exists(os.path.join(stage5_dir, "final_model", "model.safetensors")):
         print("=== Starting Stage 5: Direct Preference Optimization (DPO) ===")
@@ -91,7 +91,7 @@ def run_stage5_dpo(model_type, tokenizer, base_dir, stage4_model_path):
         timer = StageTimer(base_dir)
         start_t = timer.start_stage("Stage 5: Direct Preference Optimization (DPO)")
 
-        ConfigClass, ModelClass = get_model_classes(model_type)
+        ConfigClass, ModelClass = get_model_classes(architecture)
         config = ConfigClass.from_pretrained(stage4_model_path)
         dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
 

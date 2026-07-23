@@ -11,18 +11,18 @@ import time
 from data import prepare_rlvr_dataset
 from models import get_model_classes
 from rl_algorithms import get_rl_algorithm, RL_ALGO_REGISTRY
-from utils import generate_completions, get_resume_state, get_latest_checkpoint, cleanup_checkpoints, clear_all_checkpoints
+from utils import generate_completions, get_resume_state, get_latest_checkpoint, cleanup_checkpoints, clear_all_checkpoints, save_to_hf_hub
 from utils.callbacks import StageTimer
 
 
-def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
+def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_username=None):
     print("=== Starting Stage 6: RLVR with ALL Algorithms ===")
     stage6_dir = os.path.join(base_dir, "Stage6")
     os.makedirs(stage6_dir, exist_ok=True)
 
     ds = prepare_rlvr_dataset("../Dolci-Think-RL-32B", tokenizer)
     
-    ConfigClass, ModelClass = get_model_classes(model_type)
+    ConfigClass, ModelClass = get_model_classes(architecture)
     config = ConfigClass.from_pretrained(stage5_model_path)
     dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -35,20 +35,23 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
     global_timer = StageTimer(base_dir)
 
     # Iterate over all available RL algorithms
-    for algo_name in RL_ALGO_REGISTRY.keys():
-        print(f"\n--- Starting RLVR Training with {algo_name.upper()} ---")
-        algo_dir = os.path.join(stage6_dir, algo_name)
+    for rl_algo_name in RL_ALGO_REGISTRY.keys():
+        print(f"\n--- Starting RLVR Training with {rl_algo_name.upper()} ---")
+        algo_dir = os.path.join(stage6_dir, rl_algo_name)
         os.makedirs(algo_dir, exist_ok=True)
         
         final_model_path = os.path.join(algo_dir, "final_model")
+        repo_name = f"{architecture}_{rl_algo_name}"
         
         # Skip if this algorithm has already finished training
         if os.path.exists(final_model_path):
-            print(f"Algorithm {algo_name.upper()} already completed. Skipping to next.")
+            print(f"Algorithm {rl_algo_name.upper()} already completed locally.")
+            # Check and save to Hugging Face Hub if not uploaded yet
+            save_to_hf_hub(final_model_path, tokenizer, repo_name, hf_username=hf_username)
             continue
 
         # Start Stage Timing for the active algorithm
-        stage_key = f"Stage 6: RLVR ({algo_name.upper()})"
+        stage_key = f"Stage 6: RLVR ({rl_algo_name.upper()})"
         start_t = global_timer.start_stage(stage_key)
 
         log_file = os.path.join(algo_dir, "training_log.jsonl")
@@ -57,7 +60,7 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
         while True:
             ckpt_dir = get_latest_checkpoint(algo_dir)
             if ckpt_dir:
-                print(f"Attempting to resume {algo_name.upper()} from {ckpt_dir}")
+                print(f"Attempting to resume {rl_algo_name.upper()} from {ckpt_dir}")
                 try:
                     # Optimized model loading
                     model = ModelClass.from_pretrained(
@@ -76,7 +79,7 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
                     print(f"Failed to load checkpoint {ckpt_dir}: {e}. Deleting and trying previous.")
                     shutil.rmtree(ckpt_dir, ignore_errors=True)
             else:
-                print(f"No valid checkpoint found for {algo_name.upper()}. Starting training from the beginning.")
+                print(f"No valid checkpoint found for {rl_algo_name.upper()}. Starting training from the beginning.")
                 model = ModelClass.from_pretrained(
                     stage5_model_path, 
                     config=config,
@@ -102,7 +105,7 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
         ref_model.requires_grad_(False)
         ref_model.eval()
 
-        rl_algo = get_rl_algorithm(algo_name)
+        rl_algo = get_rl_algorithm(rl_algo_name)
 
         max_steps, group_size, gradient_accumulation_steps = 6, 2, 4
         max_prompt_length, max_completion_length = 1024, 2048
@@ -171,7 +174,7 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
             tokens_per_sec = non_pad_tokens / gen_duration if gen_duration > 0 else 0.0
             tokens_per_sec_buffer.append(tokens_per_sec)
             
-            print(f"[{algo_name.upper()}] Step {step}: Generated {non_pad_tokens} tokens in {gen_duration:.2f}s ({tokens_per_sec:.2f} tokens/s)")
+            print(f"[{rl_algo_name.upper()}] Step {step}: Generated {non_pad_tokens} tokens in {gen_duration:.2f}s ({tokens_per_sec:.2f} tokens/s)")
 
             model.train()
             model.config.use_cache = False
@@ -214,24 +217,20 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
             full_mask = torch.cat([attention_mask, (completions != tokenizer.pad_token_id).long()], dim=1)
 
             # Clamp target token indices to be strictly within vocabulary range to avoid IndexErrors.
-            # This is mathematically sound as pad tokens are masked out by comp_mask during loss computation.
             safe_completions = torch.clamp(completions, min=0, max=vocab_size - 1)
 
             # 1. Compute reference token logprobs first (no gradients needed)
-            # This avoids keeping reference forward activations in memory during the policy forward pass
             with torch.no_grad():
                 with torch.amp.autocast(device_type="cuda", dtype=dtype):
                     ref_outputs = ref_model(input_ids=full_ids, attention_mask=full_mask)
                     ref_logits = ref_outputs.logits[:, prompt_len-1:-1, :].float()
                     
-                    # Memory optimization: use cross_entropy to avoid allocating massive [B, L, V] logprobs tensor
                     ref_token_logprobs = -F.cross_entropy(
                         ref_logits.transpose(1, 2), 
                         safe_completions, 
                         reduction="none"
                     )
 
-            # Immediately delete reference variables and clean cache before policy forward
             del ref_outputs, ref_logits
             gc.collect()
             torch.cuda.empty_cache()
@@ -241,10 +240,8 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
                 policy_outputs = model(input_ids=full_ids, attention_mask=full_mask)
                 policy_logits = policy_outputs.logits[:, prompt_len-1:-1, :].float()
                 
-                # Delete the original output wrapper early to free references
                 del policy_outputs
                 
-                # Memory optimization: use cross_entropy to avoid allocating massive [B, L, V] logprobs tensor
                 policy_token_logprobs = -F.cross_entropy(
                     policy_logits.transpose(1, 2), 
                     safe_completions, 
@@ -253,7 +250,6 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
 
                 comp_mask = (completions != tokenizer.pad_token_id).float()
 
-                # Inspect compute_loss signature to dynamically pass old_logprobs if supported
                 loss_kwargs = {}
                 sig = inspect.signature(rl_algo.compute_loss)
                 if "old_logprobs" in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
@@ -269,17 +265,15 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
             
             loss_val = loss.item() * gradient_accumulation_steps
             
-            # 3. Calculate FLOPs metrics before deleting any tensors
+            # 3. Calculate FLOPs metrics
             N, P = full_ids.size(1) * group_size, sum(p.numel() for p in model.parameters())
             total_flops += 8 * N * P + (2 * max_completion_length * group_size * P)
 
-            # 4. Clean up Python-side references to intermediate tensors before backward pass.
-            # The autograd graph attached to `loss` keeps the required underlying tensors intact.
+            # 4. Clean up Python-side references
             del policy_logits, policy_token_logprobs
             del ref_token_logprobs, advantages, comp_mask
             del full_ids, full_mask, inputs, input_ids, attention_mask, completions, decoded_completions, rewards, safe_completions
             
-            # Force clean up to maximize contiguous GPU memory for backward pass
             gc.collect()
             torch.cuda.empty_cache()
 
@@ -289,15 +283,12 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
             else:
                 loss.backward()
 
-            # Free loss tensor reference as it is no longer needed
             del loss
 
             if (step + 1) % gradient_accumulation_steps == 0 or (step + 1) == max_steps:
-                # If using a scaler, unscale the gradients before calculating metrics and clipping
                 if scaler is not None:
                     scaler.unscale_(optimizer)
 
-                # Optimised vector-wise calculation of gradient mean, variance, and entropy
                 grads = [p.grad.view(-1).float() for p in model.parameters() if p.grad is not None]
                 if grads:
                     all_grads = torch.cat(grads)
@@ -322,14 +313,12 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
 
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
-                # Optimizer step with scalability check
                 if scaler is not None:
                     scaler.step(optimizer)
                     scaler.update()
                 else:
                     optimizer.step()
 
-                # Get learning rate from optimizer
                 lr = 0.0
                 for param_group in optimizer.param_groups:
                     lr = param_group.get('lr', 0.0)
@@ -337,15 +326,12 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
 
                 optimizer.zero_grad(set_to_none=True)
 
-                # Average the tokens per second throughput over the accumulation step
                 avg_tokens_per_sec = sum(tokens_per_sec_buffer) / len(tokens_per_sec_buffer) if tokens_per_sec_buffer else 0.0
                 tokens_per_sec_buffer = []
 
-                # Average the CoT length over the accumulation step
                 avg_cot_len = sum(cot_lengths_buffer) / len(cot_lengths_buffer) if cot_lengths_buffer else 0.0
                 cot_lengths_buffer = []
 
-                # Capture peak VRAM consumption since last reset
                 vram_allocated = torch.cuda.max_memory_allocated() / (1024 ** 3) if torch.cuda.is_available() else 0.0
                 vram_reserved = torch.cuda.max_memory_reserved() / (1024 ** 3) if torch.cuda.is_available() else 0.0
                 if torch.cuda.is_available():
@@ -378,7 +364,6 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
                         'cot_length': avg_cot_len
                     }) + '\n')
 
-                # Render metrics over 9 subplot panels (Added Learning Rate & CoT Length)
                 plt.figure(figsize=(45, 5))
                 for i, (data, title, color) in enumerate(zip(
                     [variances, entropies, means, losses, flops_list, tokens_per_sec_list, vram_allocated_list, learning_rates, cot_lengths_list],
@@ -405,14 +390,17 @@ def run_stage6_rlvr(model_type, tokenizer, base_dir, stage5_model_path):
 
         model.save_pretrained(final_model_path)
         clear_all_checkpoints(algo_dir)
-        print(f"=== {algo_name.upper()} Training Completed ===")
+        print(f"=== {rl_algo_name.upper()} Training Completed ===")
         
-        # Free memory at the algorithm boundaries
+        # Free memory at algorithm boundary
         del model, ref_model, optimizer, rl_algo
         gc.collect()
         torch.cuda.empty_cache()
 
-        # End timing for the algorithm stage
+        # Save to Hugging Face Hub with format: f"{architecture}_{rl_algo_name}"
+        save_to_hf_hub(final_model_path, tokenizer, repo_name, hf_username=hf_username)
+
+        # End timing for algorithm stage
         global_timer.end_stage(stage_key, start_t)
 
     print("=== Stage 6 Completed Successfully ===")

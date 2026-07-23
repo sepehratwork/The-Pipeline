@@ -9,7 +9,7 @@ from ..utils.attention import GroupedQueryAttention
 
 
 class OLMo3Config(PretrainedConfig):
-    model_type = "olmo3"
+    architecture = "olmo3"
     def __init__(
         self, 
         vocab_size=100278,

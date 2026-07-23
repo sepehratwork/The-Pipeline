@@ -1,11 +1,4 @@
 import os
-import sys
-
-# # Configure HF local cache path before other imports are resolved to guarantee cache safety
-# HF_CACHE_DIR = os.path.abspath(os.environ.get("HF_CACHE_DIR", "../test_datasets"))
-# os.environ["HF_HOME"] = HF_CACHE_DIR
-# os.environ["HF_DATASETS_CACHE"] = os.path.join(HF_CACHE_DIR, "datasets")
-# os.environ["HF_HUB_CACHE"] = os.path.join(HF_CACHE_DIR, "hub")
 
 from transformers import AutoTokenizer
 from pipeline import (
@@ -16,22 +9,18 @@ from pipeline import (
     run_stage5_dpo,
     run_stage6_rlvr
 )
-# from pipeline.evaluation import (
-#     evaluate_base_model, 
-#     evaluate_post_trained_model,
-#     pre_download_all_datasets
-# )
+
 
 def main():
-    # --- CONFIGURATION ---
-    # Choose your LLM Judge API here: "gemini" or "cloudflare"
-    JUDGE_API_CHOICE = "cloudflare" 
-    # ---------------------
 
-    # 1. Pre-download and cache all datasets locally into the exact specified cache path
-    # pre_download_all_datasets()
+    architecture = "olmo3"
+    hf_username = "SepehrKerachi"
+    pretrain_dir = "../ModelsCheckpoints/OLMo3/Pre-Training"
+    posttrain_dir = "../ModelsCheckpoints/OLMo3/Post-Training"
 
-    model_type = "olmo3"
+    # ==========================================
+    # Setting up the tokenizer
+    # ==========================================
     tokenizer = AutoTokenizer.from_pretrained("allenai/OLMo-2-1124-7B", trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -46,37 +35,25 @@ def main():
             "{% if add_generation_prompt %}{{ '<|assistant|>\n' }}{% endif %}"
         )
 
-    pretrain_dir = "../ModelsCheckpoints/OLMo3/Pre-Training"
-    posttrain_dir = "../ModelsCheckpoints/OLMo3/Post-Training"
-
-    # Ensure report directory exists
-    os.makedirs("reports", exist_ok=True)
-
     # ==========================================
     # Pre-training Stages & OLMES Evaluation
     # ==========================================
     
-    stage1_model = run_stage1_pretraining(model_type, tokenizer, pretrain_dir)
-    # evaluate_base_model(stage1_model, tokenizer, "reports/Stage1_Pretraining")
+    stage1_model = run_stage1_pretraining(architecture, tokenizer, pretrain_dir)
 
-    stage2_model = run_stage2_midtraining(model_type, tokenizer, pretrain_dir, stage1_model)
-    # evaluate_base_model(stage2_model, tokenizer, "reports/Stage2_Midtraining")
+    stage2_model = run_stage2_midtraining(architecture, tokenizer, pretrain_dir, stage1_model)
 
-    stage3_model = run_stage3_long_context(model_type, tokenizer, pretrain_dir, stage2_model)
-    # evaluate_base_model(stage3_model, tokenizer, "reports/Stage3_LongContext")
+    stage3_model = run_stage3_long_context(architecture, tokenizer, pretrain_dir, stage2_model, hf_username=hf_username)
 
     # ==========================================
     # Post-training Stages & OLMo 3 Evaluation
     # ==========================================
     
-    stage4_model = run_stage4_sft(model_type, tokenizer, posttrain_dir, stage3_model)
-    # evaluate_post_trained_model(stage4_model, tokenizer, "reports/Stage4_SFT", judge_api=JUDGE_API_CHOICE)
+    stage4_model = run_stage4_sft(architecture, tokenizer, posttrain_dir, stage3_model)
 
-    stage5_model = run_stage5_dpo(model_type, tokenizer, posttrain_dir, stage4_model)
-    # evaluate_post_trained_model(stage5_model, tokenizer, "reports/Stage5_DPO", judge_api=JUDGE_API_CHOICE)
+    stage5_model = run_stage5_dpo(architecture, tokenizer, posttrain_dir, stage4_model)
 
-    stage6_model = run_stage6_rlvr(model_type, tokenizer, posttrain_dir, stage5_model)
-    # evaluate_post_trained_model(stage6_model, tokenizer, "reports/Stage6_RLVR", judge_api=JUDGE_API_CHOICE)
+    stage6_model = run_stage6_rlvr(architecture, tokenizer, posttrain_dir, stage5_model, hf_username=hf_username)
 
     print("Pipeline and all evaluations completed successfully!")
 
