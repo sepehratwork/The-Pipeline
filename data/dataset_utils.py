@@ -41,7 +41,7 @@ def load_pretrain_phase_dataset(phase_path, tokenizer, seq_len):
         return cached_ds
 
     dss = []
-    data_dir = f"../{phase_path}/data"
+    data_dir = f"/content/drive/MyDrive/Simulated/{phase_path}/data"
 
     if os.path.exists(data_dir):
         for shard in os.listdir(data_dir):
