@@ -39,7 +39,7 @@ def _run_pretrain_stage(stage_name, architecture, tokenizer, dataset_path, seq_l
         else:
             config = ConfigClass(vocab_size=len(tokenizer), **config_kwargs)
             model = ModelClass(config).to(dtype)
-            
+
         if hasattr(model, "tie_weights"):
             model.tie_weights()
 

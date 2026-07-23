@@ -30,7 +30,7 @@ def save_cache(dataset, processed_path, current_config):
 
 
 def load_pretrain_phase_dataset(phase_path, tokenizer, seq_len):
-    processed_path = f"../{phase_path}/processed"
+    processed_path = f"/content/drive/MyDrive/Simulated/{phase_path}/processed"
     current_config = {
         "seq_len": seq_len,
         "tokenizer": getattr(tokenizer, "name_or_path", str(tokenizer.__class__))
@@ -68,7 +68,7 @@ def load_pretrain_phase_dataset(phase_path, tokenizer, seq_len):
 
 
 def prepare_sft_dataset(dataset_name, tokenizer, seq_len):
-    processed_path = f"{dataset_name}/processed"
+    processed_path = f"/content/drive/MyDrive/Simulated/{dataset_name}/processed"
     current_config = {
         "seq_len": seq_len,
         "tokenizer": getattr(tokenizer, "name_or_path", str(tokenizer.__class__))
@@ -128,7 +128,7 @@ def format_dpo_dataset(example):
 
 
 def prepare_dpo_dataset(dataset_name):
-    processed_path = f"{dataset_name}/processed"
+    processed_path = f"/content/drive/MyDrive/Simulated/{dataset_name}/processed"
     current_config = {"format": "dpo_standard"}
     
     cached_ds = check_and_load_cache(processed_path, current_config)
@@ -144,7 +144,7 @@ def prepare_dpo_dataset(dataset_name):
 
 
 def prepare_rlvr_dataset(dataset_name, tokenizer):
-    processed_path = f"{dataset_name}/processed"
+    processed_path = f"/content/drive/MyDrive/Simulated/{dataset_name}/processed"
     current_config = {
         "tokenizer": getattr(tokenizer, "name_or_path", str(tokenizer.__class__)),
         "format": "rlvr_extracted"

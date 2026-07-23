@@ -37,7 +37,7 @@ def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path):
         if hasattr(model, "tie_weights"):
             model.tie_weights()
 
-        ds = prepare_sft_dataset("../Dolci-Think-SFT-32B", tokenizer, seq_len=1024)
+        ds = prepare_sft_dataset("Dolci-Think-SFT-32B", tokenizer, seq_len=1024)
 
         args = TrainingArguments(
             max_steps=6,
@@ -119,7 +119,7 @@ def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path):
         ref_model.requires_grad_(False)
         ref_model.eval()
 
-        ds = prepare_dpo_dataset("../Dolci-Think-DPO-32B")
+        ds = prepare_dpo_dataset("Dolci-Think-DPO-32B")
 
         args = DPOConfig(
             max_steps=6,

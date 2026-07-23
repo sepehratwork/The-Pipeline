@@ -20,7 +20,7 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
     stage6_dir = os.path.join(base_dir, "Stage6")
     os.makedirs(stage6_dir, exist_ok=True)
 
-    ds = prepare_rlvr_dataset("../Dolci-Think-RL-32B", tokenizer)
+    ds = prepare_rlvr_dataset("Dolci-Think-RL-32B", tokenizer)
     
     ConfigClass, ModelClass = get_model_classes(architecture)
     config = ConfigClass.from_pretrained(stage5_model_path)
