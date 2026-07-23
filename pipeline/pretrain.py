@@ -11,7 +11,7 @@ from utils.callbacks import StageTimer
 
 
 def _run_pretrain_stage(stage_name, architecture, tokenizer, dataset_path, seq_len, output_dir, config_kwargs, train_args_kwargs, resume_model_path=None):
-    if not os.path.exists(os.path.join(output_dir, "final_model", "model.safetensors")):
+    if not os.path.exists(os.path.join(output_dir, "final_model", "model.safetensors")) and not os.path.exists(os.path.join(output_dir, "final_model", "pytorch_model.bin")):
         print(f"=== Starting {stage_name} ===")
         os.makedirs(output_dir, exist_ok=True)
         
@@ -40,6 +40,9 @@ def _run_pretrain_stage(stage_name, architecture, tokenizer, dataset_path, seq_l
             config = ConfigClass(vocab_size=len(tokenizer), **config_kwargs)
             model = ModelClass(config).to(dtype)
             
+        if hasattr(model, "tie_weights"):
+            model.tie_weights()
+
         ds = load_pretrain_phase_dataset(dataset_path, tokenizer, seq_len=seq_len)
         args = TrainingArguments(
             output_dir=output_dir,
@@ -51,6 +54,7 @@ def _run_pretrain_stage(stage_name, architecture, tokenizer, dataset_path, seq_l
             max_grad_norm=1.0,
             optim="adamw_torch_fused",
             save_total_limit=2,
+            save_safetensors=False,  # Prevents RuntimeError with shared embedding tensors
             **train_args_kwargs
         )
         trainer = Trainer(
@@ -76,7 +80,7 @@ def _run_pretrain_stage(stage_name, architecture, tokenizer, dataset_path, seq_l
                 print(f"Checkpoint {ckpt} corrupted or failed to load: {e}. Deleting and trying previous.")
                 shutil.rmtree(ckpt, ignore_errors=True)
                 
-        model.save_pretrained(os.path.join(output_dir, "final_model"))
+        model.save_pretrained(os.path.join(output_dir, "final_model"), safe_serialization=False)
         clear_all_checkpoints(output_dir) # Remove all checkpoints after phase finishes
 
         del model, trainer, ds

@@ -14,7 +14,7 @@ from utils.callbacks import StageTimer
 
 def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path):
     stage4_dir = os.path.join(base_dir, "Stage4")
-    if not os.path.exists(os.path.join(stage4_dir, "final_model", "model.safetensors")):
+    if not os.path.exists(os.path.join(stage4_dir, "final_model", "model.safetensors")) and not os.path.exists(os.path.join(stage4_dir, "final_model", "pytorch_model.bin")):
         print("=== Starting Stage 4: Supervised Finetuning (SFT) ===")
         os.makedirs(stage4_dir, exist_ok=True)
 
@@ -34,6 +34,9 @@ def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path):
             torch_dtype=dtype,
             low_cpu_mem_usage=True
         )
+        if hasattr(model, "tie_weights"):
+            model.tie_weights()
+
         ds = prepare_sft_dataset("../Dolci-Think-SFT-32B", tokenizer, seq_len=1024)
 
         args = TrainingArguments(
@@ -45,11 +48,11 @@ def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path):
             gradient_checkpointing=True,
             gradient_checkpointing_kwargs={"use_reentrant": False},
             optim="adamw_torch_fused",
+            save_safetensors=False,  # Prevents RuntimeError with shared embedding tensors
         )
 
         trainer = Trainer(
             model=model, args=args, train_dataset=ds,
-            # Passed model to callback init
             callbacks=[GradientMetricsCallback(model=model, log_file=os.path.join(stage4_dir, "training_log.jsonl"), plot_dir=stage4_dir)]
         )
 
@@ -68,7 +71,7 @@ def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path):
                 print(f"Checkpoint {ckpt} corrupted or failed to load: {e}. Deleting and trying previous.")
                 shutil.rmtree(ckpt, ignore_errors=True)
                     
-        model.save_pretrained(os.path.join(stage4_dir, "final_model"))
+        model.save_pretrained(os.path.join(stage4_dir, "final_model"), safe_serialization=False)
         clear_all_checkpoints(stage4_dir) # Remove all checkpoints after phase finishes
         
         del model, trainer, ds
@@ -83,7 +86,7 @@ def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path):
 
 def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path):
     stage5_dir = os.path.join(base_dir, "Stage5")
-    if not os.path.exists(os.path.join(stage5_dir, "final_model", "model.safetensors")):
+    if not os.path.exists(os.path.join(stage5_dir, "final_model", "model.safetensors")) and not os.path.exists(os.path.join(stage5_dir, "final_model", "pytorch_model.bin")):
         print("=== Starting Stage 5: Direct Preference Optimization (DPO) ===")
         os.makedirs(stage5_dir, exist_ok=True)
 
@@ -108,6 +111,9 @@ def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path):
             torch_dtype=dtype,
             low_cpu_mem_usage=True
         )
+        if hasattr(model, "tie_weights"):
+            model.tie_weights()
+            ref_model.tie_weights()
         
         # Deactive gradient tracking natively
         ref_model.requires_grad_(False)
@@ -127,11 +133,11 @@ def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path):
             gradient_checkpointing_kwargs={"use_reentrant": False},
             optim="adamw_torch_fused",
             beta=5.0, max_length=2048,
+            save_safetensors=False,  # Prevents RuntimeError with shared embedding tensors
         )
 
         trainer = DPOTrainer(
             model=model, ref_model=ref_model, args=args, train_dataset=ds, processing_class=tokenizer,
-            # Passed model to callback init
             callbacks=[GradientMetricsCallback(model=model, log_file=os.path.join(stage5_dir, "training_log.jsonl"), plot_dir=stage5_dir)]
         )
 
@@ -150,7 +156,7 @@ def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path):
                 print(f"Checkpoint {ckpt} corrupted or failed to load: {e}. Deleting and trying previous.")
                 shutil.rmtree(ckpt, ignore_errors=True)
                     
-        model.save_pretrained(os.path.join(stage5_dir, "final_model"))
+        model.save_pretrained(os.path.join(stage5_dir, "final_model"), safe_serialization=False)
         clear_all_checkpoints(stage5_dir)
 
         del model, ref_model, trainer, ds
