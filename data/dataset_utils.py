@@ -29,7 +29,19 @@ def save_cache(dataset, processed_path, current_config):
         json.dump(current_config, f)
 
 
-def load_pretrain_phase_dataset(phase_path, tokenizer, seq_len):
+def format_dpo_dataset(example):
+    if isinstance(example["chosen"], list):
+        if len(example["chosen"]) > 1:
+            example["prompt"] = example["chosen"][:-1]
+            example["chosen"] = example["chosen"][-1:]
+        elif isinstance(example["prompt"], str):
+            example["prompt"] = [{"role": "user", "content": example["prompt"]}]
+        if isinstance(example["rejected"], list) and len(example["rejected"]) > 1:
+            example["rejected"] = example["rejected"][-1:]
+    return example
+
+
+def prepare_pretrain_dataset(phase_path, tokenizer, seq_len):
     processed_path = f"/content/drive/MyDrive/Simulated/{phase_path}/processed"
     current_config = {
         "seq_len": seq_len,
@@ -113,18 +125,6 @@ def prepare_sft_dataset(dataset_name, tokenizer, seq_len):
     
     save_cache(tokenized_ds, processed_path, current_config)
     return tokenized_ds
-
-
-def format_dpo_dataset(example):
-    if isinstance(example["chosen"], list):
-        if len(example["chosen"]) > 1:
-            example["prompt"] = example["chosen"][:-1]
-            example["chosen"] = example["chosen"][-1:]
-        elif isinstance(example["prompt"], str):
-            example["prompt"] = [{"role": "user", "content": example["prompt"]}]
-        if isinstance(example["rejected"], list) and len(example["rejected"]) > 1:
-            example["rejected"] = example["rejected"][-1:]
-    return example
 
 
 def prepare_dpo_dataset(dataset_name):

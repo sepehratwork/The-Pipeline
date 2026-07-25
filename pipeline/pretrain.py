@@ -5,7 +5,7 @@ import torch
 from transformers import Trainer, TrainingArguments
 
 from models import get_model_classes
-from data import load_pretrain_phase_dataset
+from data import prepare_pretrain_dataset
 from utils import GradientMetricsCallback, get_latest_checkpoint, clear_all_checkpoints, save_to_hf_hub
 from utils.callbacks import StageTimer
 
@@ -14,11 +14,6 @@ def _run_pretrain_stage(stage_name, architecture, tokenizer, dataset_path, seq_l
     if not os.path.exists(os.path.join(output_dir, "final_model", "model.safetensors")) and not os.path.exists(os.path.join(output_dir, "final_model", "pytorch_model.bin")):
         print(f"=== Starting {stage_name} ===")
         os.makedirs(output_dir, exist_ok=True)
-        
-        # Start Stage Timing
-        base_dir = os.path.dirname(output_dir)
-        timer = StageTimer(base_dir)
-        start_t = timer.start_stage(stage_name)
         
         ConfigClass, ModelClass = get_model_classes(architecture)
         
@@ -43,7 +38,7 @@ def _run_pretrain_stage(stage_name, architecture, tokenizer, dataset_path, seq_l
         if hasattr(model, "tie_weights"):
             model.tie_weights()
 
-        ds = load_pretrain_phase_dataset(dataset_path, tokenizer, seq_len=seq_len)
+        ds = prepare_pretrain_dataset(dataset_path, tokenizer, seq_len=seq_len)
         args = TrainingArguments(
             output_dir=output_dir,
             report_to="none",
@@ -54,7 +49,7 @@ def _run_pretrain_stage(stage_name, architecture, tokenizer, dataset_path, seq_l
             max_grad_norm=1.0,
             optim="adamw_torch_fused",
             save_total_limit=2,
-            save_safetensors=False,  # Prevents RuntimeError with shared embedding tensors
+            # save_safetensors=False,  # Prevents RuntimeError with shared embedding tensors
             **train_args_kwargs
         )
         trainer = Trainer(
@@ -62,8 +57,13 @@ def _run_pretrain_stage(stage_name, architecture, tokenizer, dataset_path, seq_l
             args=args,
             train_dataset=ds,
             # Passed model to callback init
-            callbacks=[GradientMetricsCallback(model=model, log_file=os.path.join(output_dir, "training_log.jsonl"), plot_dir=output_dir)]
+            callbacks=[GradientMetricsCallback(model=model, log_file=os.path.join(output_dir, f"training_log_{stage_name}.jsonl"), plot_dir=output_dir)]
         )
+        
+        # Start Stage Timing
+        base_dir = os.path.dirname(output_dir)
+        timer = StageTimer(base_dir)
+        start_t = timer.start_stage(stage_name)
         
         # Robust resumption loop
         while True:
@@ -80,15 +80,15 @@ def _run_pretrain_stage(stage_name, architecture, tokenizer, dataset_path, seq_l
                 print(f"Checkpoint {ckpt} corrupted or failed to load: {e}. Deleting and trying previous.")
                 shutil.rmtree(ckpt, ignore_errors=True)
                 
+        # End Stage Timing
+        timer.end_stage(stage_name, start_t)
+        
         model.save_pretrained(os.path.join(output_dir, "final_model"), safe_serialization=False)
         clear_all_checkpoints(output_dir) # Remove all checkpoints after phase finishes
 
         del model, trainer, ds
         gc.collect()
         torch.cuda.empty_cache()
-        
-        # End Stage Timing
-        timer.end_stage(stage_name, start_t)
         
     clear_all_checkpoints(output_dir) # Failsafe cleanup
     return os.path.join(output_dir, "final_model")

@@ -18,10 +18,6 @@ def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path):
         print("=== Starting Stage 4: Supervised Finetuning (SFT) ===")
         os.makedirs(stage4_dir, exist_ok=True)
 
-        # Start Stage Timing
-        timer = StageTimer(base_dir)
-        start_t = timer.start_stage("Stage 4: Supervised Finetuning (SFT)")
-
         ConfigClass, ModelClass = get_model_classes(architecture)
         config = ConfigClass.from_pretrained(stage3_model_path)
 
@@ -48,7 +44,7 @@ def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path):
             gradient_checkpointing=True,
             gradient_checkpointing_kwargs={"use_reentrant": False},
             optim="adamw_torch_fused",
-            save_safetensors=False,  # Prevents RuntimeError with shared embedding tensors
+            # save_safetensors=False,  # Prevents RuntimeError with shared embedding tensors
         )
 
         trainer = Trainer(
@@ -56,6 +52,10 @@ def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path):
             callbacks=[GradientMetricsCallback(model=model, log_file=os.path.join(stage4_dir, "training_log.jsonl"), plot_dir=stage4_dir)]
         )
 
+        # Start Stage Timing
+        timer = StageTimer(base_dir)
+        start_t = timer.start_stage("Stage 4: Supervised Finetuning (SFT)")
+        
         # Robust resumption loop
         while True:
             ckpt = get_latest_checkpoint(stage4_dir)
@@ -71,6 +71,9 @@ def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path):
                 print(f"Checkpoint {ckpt} corrupted or failed to load: {e}. Deleting and trying previous.")
                 shutil.rmtree(ckpt, ignore_errors=True)
                     
+        # End Stage Timing
+        timer.end_stage("Stage 4: Supervised Finetuning (SFT)", start_t)
+
         model.save_pretrained(os.path.join(stage4_dir, "final_model"), safe_serialization=False)
         clear_all_checkpoints(stage4_dir) # Remove all checkpoints after phase finishes
         
@@ -78,8 +81,6 @@ def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path):
         gc.collect()
         torch.cuda.empty_cache()
 
-        # End Stage Timing
-        timer.end_stage("Stage 4: Supervised Finetuning (SFT)", start_t)
 
     return os.path.join(stage4_dir, "final_model")
 
@@ -89,10 +90,6 @@ def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path):
     if not os.path.exists(os.path.join(stage5_dir, "final_model", "model.safetensors")) and not os.path.exists(os.path.join(stage5_dir, "final_model", "pytorch_model.bin")):
         print("=== Starting Stage 5: Direct Preference Optimization (DPO) ===")
         os.makedirs(stage5_dir, exist_ok=True)
-
-        # Start Stage Timing
-        timer = StageTimer(base_dir)
-        start_t = timer.start_stage("Stage 5: Direct Preference Optimization (DPO)")
 
         ConfigClass, ModelClass = get_model_classes(architecture)
         config = ConfigClass.from_pretrained(stage4_model_path)
@@ -133,7 +130,7 @@ def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path):
             gradient_checkpointing_kwargs={"use_reentrant": False},
             optim="adamw_torch_fused",
             beta=5.0, max_length=2048,
-            save_safetensors=False,  # Prevents RuntimeError with shared embedding tensors
+            # save_safetensors=False,  # Prevents RuntimeError with shared embedding tensors
         )
 
         trainer = DPOTrainer(
@@ -141,6 +138,10 @@ def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path):
             callbacks=[GradientMetricsCallback(model=model, log_file=os.path.join(stage5_dir, "training_log.jsonl"), plot_dir=stage5_dir)]
         )
 
+        # Start Stage Timing
+        timer = StageTimer(base_dir)
+        start_t = timer.start_stage("Stage 5: Direct Preference Optimization (DPO)")
+        
         # Robust resumption loop
         while True:
             ckpt = get_latest_checkpoint(stage5_dir)
@@ -156,14 +157,14 @@ def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path):
                 print(f"Checkpoint {ckpt} corrupted or failed to load: {e}. Deleting and trying previous.")
                 shutil.rmtree(ckpt, ignore_errors=True)
                     
+        # End Stage Timing
+        timer.end_stage("Stage 5: Direct Preference Optimization (DPO)", start_t)
+
         model.save_pretrained(os.path.join(stage5_dir, "final_model"), safe_serialization=False)
         clear_all_checkpoints(stage5_dir)
 
         del model, ref_model, trainer, ds
         gc.collect()
         torch.cuda.empty_cache()
-
-        # End Stage Timing
-        timer.end_stage("Stage 5: Direct Preference Optimization (DPO)", start_t)
 
     return os.path.join(stage5_dir, "final_model")
