@@ -15,8 +15,8 @@ def main():
 
     architecture = "olmo3"
     hf_username = "SepehrKerachi"
-    pretrain_dir = "../ModelsCheckpoints/OLMo3/Pre-Training"
-    posttrain_dir = "../ModelsCheckpoints/OLMo3/Post-Training"
+    pretrain_dir = f"/content/drive/MyDrive/Simulated/ModelsCheckpoints/{architecture}/Pre-Training"
+    posttrain_dir = f"/content/drive/MyDrive/Simulated/ModelsCheckpoints/{architecture}/Post-Training"
 
     # ==========================================
     # Setting up the tokenizer
