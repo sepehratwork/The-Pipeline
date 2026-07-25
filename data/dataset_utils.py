@@ -90,7 +90,7 @@ def prepare_sft_dataset(dataset_name, tokenizer, seq_len):
     if cached_ds is not None:
         return cached_ds
 
-    ds = load_dataset(dataset_name, split="train")
+    ds = load_dataset(f"/content/drive/MyDrive/Simulated/{dataset_name}", split="train")
 
     def tokenize_function(examples):
         texts = []
@@ -135,7 +135,7 @@ def prepare_dpo_dataset(dataset_name):
     if cached_ds is not None:
         return cached_ds
 
-    ds = load_dataset(dataset_name, split="train")
+    ds = load_dataset(f"/content/drive/MyDrive/Simulated/{dataset_name}", split="train")
     num_proc = os.cpu_count() or 1
     formatted_ds = ds.map(format_dpo_dataset, num_proc=num_proc, desc="Formatting DPO dataset")
     
@@ -154,7 +154,7 @@ def prepare_rlvr_dataset(dataset_name, tokenizer):
     if cached_ds is not None:
         return cached_ds
 
-    ds = load_dataset(dataset_name, split="train")
+    ds = load_dataset(f"/content/drive/MyDrive/Simulated/{dataset_name}", split="train")
 
     def extract_fields(example):
         if "prompt" in example: prompt_text = example["prompt"]
