@@ -16,16 +16,10 @@ def save_to_hf_hub(model_path, tokenizer, repo_name, hf_username=None):
     """
     api = HfApi()
     
-    # Determine repo_id (e.g., 'username/olmo3_base')
     if hf_username:
         repo_id = f"{hf_username}/{repo_name}"
     else:
-        try:
-            user_info = api.whoami()
-            username = user_info.get("name")
-            repo_id = f"{username}/{repo_name}" if username else repo_name
-        except Exception:
-            repo_id = repo_name
+        raise ValueError("hf_username must have value")
 
     # Check whether the model repository already exists on Hugging Face Hub
     try:
@@ -34,9 +28,9 @@ def save_to_hf_hub(model_path, tokenizer, repo_name, hf_username=None):
         print(f"Warning: Could not check existence of '{repo_id}' on HF Hub: {e}")
         exists = False
 
-    if exists:
-        print(f"Model '{repo_id}' already exists on Hugging Face Hub. Skipping upload.")
-        return
+    # if exists:
+    #     print(f"Model '{repo_id}' already exists on Hugging Face Hub. Skipping upload.")
+    #     return
 
     print(f"Uploading model from '{model_path}' to Hugging Face Hub as '{repo_id}'...")
     try:
