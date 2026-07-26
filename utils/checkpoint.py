@@ -4,13 +4,12 @@ import shutil
 from huggingface_hub import HfApi
 
 
-def save_to_hf_hub(model_path, tokenizer, repo_name, hf_username=None):
+def save_to_hf_hub(model_path, repo_name, hf_username=None):
     """
-    Saves the trained model and tokenizer to Hugging Face Hub if it hasn't been uploaded yet.
+    Saves the trained model to Hugging Face Hub if it hasn't been uploaded yet.
     
     Args:
         model_path (str): Path to the saved final model directory.
-        tokenizer: PreTrainedTokenizer instance.
         repo_name (str): Target repository name on Hugging Face (e.g., 'olmo3_base').
         hf_username (str, optional): Hugging Face username or organization. If None, auto-detected.
     """
@@ -21,12 +20,12 @@ def save_to_hf_hub(model_path, tokenizer, repo_name, hf_username=None):
     else:
         raise ValueError("hf_username must have value")
 
-    # Check whether the model repository already exists on Hugging Face Hub
-    try:
-        exists = api.repo_exists(repo_id=repo_id, repo_type="model")
-    except Exception as e:
-        print(f"Warning: Could not check existence of '{repo_id}' on HF Hub: {e}")
-        exists = False
+    # # Check whether the model repository already exists on Hugging Face Hub
+    # try:
+    #     exists = api.repo_exists(repo_id=repo_id, repo_type="model")
+    # except Exception as e:
+    #     print(f"Warning: Could not check existence of '{repo_id}' on HF Hub: {e}")
+    #     exists = False
 
     # if exists:
     #     print(f"Model '{repo_id}' already exists on Hugging Face Hub. Skipping upload.")
@@ -40,8 +39,6 @@ def save_to_hf_hub(model_path, tokenizer, repo_name, hf_username=None):
             repo_id=repo_id,
             repo_type="model"
         )
-        if tokenizer is not None:
-            tokenizer.push_to_hub(repo_id)
         print(f"Successfully uploaded '{repo_id}' to Hugging Face Hub.")
     except Exception as e:
         print(f"Failed to upload model to Hugging Face Hub: {e}")

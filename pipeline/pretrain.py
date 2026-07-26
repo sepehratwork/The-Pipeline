@@ -124,6 +124,6 @@ def run_stage3_long_context(architecture, tokenizer, base_dir, stage2_model_path
     
     # Save model to Hugging Face Hub with format: f"{architecture}_base"
     repo_name = f"{architecture}_base"
-    save_to_hf_hub(stage3_model_path, tokenizer, repo_name, hf_username=hf_username)
+    save_to_hf_hub(stage3_model_path, repo_name, hf_username=hf_username)
 
     return stage3_model_path

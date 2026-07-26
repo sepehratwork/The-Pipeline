@@ -44,6 +44,7 @@ def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path):
             gradient_checkpointing=True,
             gradient_checkpointing_kwargs={"use_reentrant": False},
             optim="adamw_torch_fused",
+            max_length=1024
             # save_safetensors=False,  # Prevents RuntimeError with shared embedding tensors
         )
 
@@ -129,7 +130,8 @@ def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path):
             gradient_checkpointing=True, 
             gradient_checkpointing_kwargs={"use_reentrant": False},
             optim="adamw_torch_fused",
-            beta=5.0, max_length=2048,
+            beta=5.0, 
+            max_length=2048,
             # save_safetensors=False,  # Prevents RuntimeError with shared embedding tensors
         )
 

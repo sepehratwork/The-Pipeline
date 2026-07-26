@@ -46,7 +46,7 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
         # Skip if this algorithm has already finished training
         if os.path.exists(final_model_path):
             print(f"Algorithm {rl_algo_name.upper()} already completed locally.")
-            save_to_hf_hub(final_model_path, tokenizer, repo_name, hf_username=hf_username)
+            save_to_hf_hub(final_model_path, repo_name, hf_username=hf_username)
             continue
 
         # Start Stage Timing for the active algorithm
@@ -387,7 +387,7 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
         gc.collect()
         torch.cuda.empty_cache()
 
-        save_to_hf_hub(final_model_path, tokenizer, repo_name, hf_username=hf_username)
+        save_to_hf_hub(final_model_path, repo_name, hf_username=hf_username)
 
         global_timer.end_stage(stage_key, start_t)
 
