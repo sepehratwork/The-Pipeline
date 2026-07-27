@@ -101,7 +101,9 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
         ).to(device)
         
         if hasattr(model, "tie_weights"):
+            model.config.tie_word_embeddings = True
             model.tie_weights()
+            ref_model.config.tie_word_embeddings = True
             ref_model.tie_weights()
 
         # Configure non-reentrant gradient checkpointing and input requirements
@@ -386,9 +388,14 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
                 ckpt_path = os.path.join(algo_dir, f"checkpoint-{step}")
                 os.makedirs(ckpt_path, exist_ok=True)
                 if hasattr(model, "tie_weights"):
+                    model.config.tie_word_embeddings = True
                     model.tie_weights()
 
-                model.save_pretrained(ckpt_path, safe_serialization=True)
+                try:
+                    model.save_pretrained(ckpt_path, safe_serialization=True)
+                except RuntimeError:
+                    model.save_pretrained(ckpt_path, safe_serialization=False)
+
                 tokenizer.save_pretrained(ckpt_path)
                 if hasattr(model, "generation_config") and model.generation_config is not None:
                     model.generation_config.save_pretrained(ckpt_path)
@@ -400,9 +407,14 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
         # Final algorithm save following HF standard serialization
         os.makedirs(final_model_path, exist_ok=True)
         if hasattr(model, "tie_weights"):
+            model.config.tie_word_embeddings = True
             model.tie_weights()
 
-        model.save_pretrained(final_model_path, safe_serialization=True)
+        try:
+            model.save_pretrained(final_model_path, safe_serialization=True)
+        except RuntimeError:
+            model.save_pretrained(final_model_path, safe_serialization=False)
+
         tokenizer.save_pretrained(final_model_path)
         if hasattr(model, "generation_config") and model.generation_config is not None:
             model.generation_config.save_pretrained(final_model_path)
