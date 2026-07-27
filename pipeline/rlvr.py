@@ -175,14 +175,6 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
             non_pad_tokens = (completions != tokenizer.pad_token_id).sum().item()
             tokens_per_sec = non_pad_tokens / gen_duration if gen_duration > 0 else 0.0
             tokens_per_sec_buffer.append(tokens_per_sec)
-            
-            print(
-                f"[{rl_algo_name.upper()}] Step {step}: "
-                f"loss={loss_val:.6f}, variance={var:.6e}, entropy={entropy:.6f}, mean={mean:.6e}, \n"
-                f"flops={total_flops}, tokens_per_sec={avg_tokens_per_sec:.2f}, \n"
-                f"vram_allocated={vram_allocated:.3f}GB, vram_reserved={vram_reserved:.3f}GB, \n"
-                f"learning_rate={lr:.3e}, cot_length={avg_cot_len:.2f}\n\n\n"
-            )
 
             model.train()
             model.config.use_cache = False
@@ -337,6 +329,14 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
                 vram_reserved = torch.cuda.max_memory_reserved() / (1024 ** 3) if torch.cuda.is_available() else 0.0
                 if torch.cuda.is_available():
                     torch.cuda.reset_peak_memory_stats()
+
+                print(
+                    f"[{rl_algo_name.upper()}] Step {step}: "
+                    f"loss={loss_val:.6f}, variance={var:.6e}, entropy={entropy:.6f}, mean={mean:.6e}, \n"
+                    f"flops={total_flops}, tokens_per_sec={avg_tokens_per_sec:.2f}, \n"
+                    f"vram_allocated={vram_allocated:.3f}GB, vram_reserved={vram_reserved:.3f}GB, \n"
+                    f"learning_rate={lr:.3e}, cot_length={avg_cot_len:.2f}\n\n\n"
+                )
 
                 steps_list.append(step)
                 variances.append(var)
