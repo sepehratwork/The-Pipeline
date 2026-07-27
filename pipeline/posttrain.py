@@ -158,7 +158,7 @@ def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path):
             optim="adamw_torch_fused",
             beta=5.0, 
             max_length=2048,
-            save_safetensors=True,  # Standard Hugging Face safetensors format
+            # save_safetensors=True,  # Standard Hugging Face safetensors format
         )
 
         trainer = DPOTrainer(
