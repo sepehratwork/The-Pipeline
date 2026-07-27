@@ -14,7 +14,15 @@ from utils.callbacks import StageTimer
 
 def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path):
     stage4_dir = os.path.join(base_dir, "Stage4")
-    if not os.path.exists(os.path.join(stage4_dir, "final_model", "model.safetensors")) and not os.path.exists(os.path.join(stage4_dir, "final_model", "pytorch_model.bin")):
+    final_model_dir = os.path.join(stage4_dir, "final_model")
+
+    # Robust check for Hugging Face single-file or sharded model checkpoints
+    is_already_saved = any(
+        os.path.exists(os.path.join(final_model_dir, fname))
+        for fname in ["model.safetensors", "model.safetensors.index.json", "pytorch_model.bin", "pytorch_model.bin.index.json"]
+    )
+
+    if not is_already_saved:
         print("=== Starting Stage 4: Supervised Finetuning (SFT) ===")
         os.makedirs(stage4_dir, exist_ok=True)
 
@@ -44,12 +52,13 @@ def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path):
             gradient_checkpointing=True,
             gradient_checkpointing_kwargs={"use_reentrant": False},
             optim="adamw_torch_fused",
+            save_safetensors=True,  # Standard Hugging Face safetensors format
             max_length=1024
-            # save_safetensors=False,  # Prevents RuntimeError with shared embedding tensors
         )
 
         trainer = Trainer(
             model=model, args=args, train_dataset=ds,
+            processing_class=tokenizer,  # Standard HF Trainer tokenizer binding
             callbacks=[GradientMetricsCallback(model=model, log_file=os.path.join(stage4_dir, "training_log.jsonl"), plot_dir=stage4_dir)]
         )
 
@@ -75,20 +84,36 @@ def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path):
         # End Stage Timing
         timer.end_stage("Stage 4: Supervised Finetuning (SFT)", start_t)
 
-        model.save_pretrained(os.path.join(stage4_dir, "final_model"), safe_serialization=False)
-        clear_all_checkpoints(stage4_dir) # Remove all checkpoints after phase finishes
+        # Save model, tokenizer, and generation config according to HF standards
+        os.makedirs(final_model_dir, exist_ok=True)
+        if hasattr(model, "tie_weights"):
+            model.tie_weights()
+
+        model.save_pretrained(final_model_dir, safe_serialization=True)
+        tokenizer.save_pretrained(final_model_dir)
+        if hasattr(model, "generation_config") and model.generation_config is not None:
+            model.generation_config.save_pretrained(final_model_dir)
+
+        clear_all_checkpoints(stage4_dir) # Remove intermediate checkpoints after phase finishes
         
         del model, trainer, ds
         gc.collect()
         torch.cuda.empty_cache()
 
-
-    return os.path.join(stage4_dir, "final_model")
+    return final_model_dir
 
 
 def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path):
     stage5_dir = os.path.join(base_dir, "Stage5")
-    if not os.path.exists(os.path.join(stage5_dir, "final_model", "model.safetensors")) and not os.path.exists(os.path.join(stage5_dir, "final_model", "pytorch_model.bin")):
+    final_model_dir = os.path.join(stage5_dir, "final_model")
+
+    # Robust check for Hugging Face single-file or sharded model checkpoints
+    is_already_saved = any(
+        os.path.exists(os.path.join(final_model_dir, fname))
+        for fname in ["model.safetensors", "model.safetensors.index.json", "pytorch_model.bin", "pytorch_model.bin.index.json"]
+    )
+
+    if not is_already_saved:
         print("=== Starting Stage 5: Direct Preference Optimization (DPO) ===")
         os.makedirs(stage5_dir, exist_ok=True)
 
@@ -132,7 +157,7 @@ def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path):
             optim="adamw_torch_fused",
             beta=5.0, 
             max_length=2048,
-            # save_safetensors=False,  # Prevents RuntimeError with shared embedding tensors
+            save_safetensors=True,  # Standard Hugging Face safetensors format
         )
 
         trainer = DPOTrainer(
@@ -162,11 +187,20 @@ def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path):
         # End Stage Timing
         timer.end_stage("Stage 5: Direct Preference Optimization (DPO)", start_t)
 
-        model.save_pretrained(os.path.join(stage5_dir, "final_model"), safe_serialization=False)
+        # Save model, tokenizer, and generation config according to HF standards
+        os.makedirs(final_model_dir, exist_ok=True)
+        if hasattr(model, "tie_weights"):
+            model.tie_weights()
+
+        model.save_pretrained(final_model_dir, safe_serialization=True)
+        tokenizer.save_pretrained(final_model_dir)
+        if hasattr(model, "generation_config") and model.generation_config is not None:
+            model.generation_config.save_pretrained(final_model_dir)
+
         clear_all_checkpoints(stage5_dir)
 
         del model, ref_model, trainer, ds
         gc.collect()
         torch.cuda.empty_cache()
 
-    return os.path.join(stage5_dir, "final_model")
+    return final_model_dir

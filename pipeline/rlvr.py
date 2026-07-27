@@ -43,8 +43,12 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
         final_model_path = os.path.join(algo_dir, "final_model")
         repo_name = f"{architecture}_{rl_algo_name}"
         
-        # Skip if this algorithm has already finished training
-        if os.path.exists(final_model_path):
+        # Skip if this algorithm has already finished training (check for single-file or sharded HF checkpoints)
+        is_already_saved = any(
+            os.path.exists(os.path.join(final_model_path, fname))
+            for fname in ["model.safetensors", "model.safetensors.index.json", "pytorch_model.bin", "pytorch_model.bin.index.json"]
+        )
+        if is_already_saved:
             print(f"Algorithm {rl_algo_name.upper()} already completed locally.")
             save_to_hf_hub(final_model_path, repo_name, hf_username=hf_username)
             continue
@@ -172,7 +176,13 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
             tokens_per_sec = non_pad_tokens / gen_duration if gen_duration > 0 else 0.0
             tokens_per_sec_buffer.append(tokens_per_sec)
             
-            print(f"[{rl_algo_name.upper()}] Step {step}: Generated {non_pad_tokens} tokens in {gen_duration:.2f}s ({tokens_per_sec:.2f} tokens/s)")
+            print(
+                f"[{rl_algo_name.upper()}] Step {step}: "
+                f"loss={loss_val:.6f}, variance={var:.6e}, entropy={entropy:.6f}, mean={mean:.6e}, \n"
+                f"flops={total_flops}, tokens_per_sec={avg_tokens_per_sec:.2f}, \n"
+                f"vram_allocated={vram_allocated:.3f}GB, vram_reserved={vram_reserved:.3f}GB, \n"
+                f"learning_rate={lr:.3e}, cot_length={avg_cot_len:.2f}\n\n\n"
+            )
 
             model.train()
             model.config.use_cache = False
@@ -372,14 +382,31 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
                 plt.savefig(os.path.join(algo_dir, 'training_metrics.png'))
                 plt.close()
 
+                # Save intermediate training step checkpoints safely
                 ckpt_path = os.path.join(algo_dir, f"checkpoint-{step}")
                 os.makedirs(ckpt_path, exist_ok=True)
-                model.save_pretrained(ckpt_path, safe_serialization=False)
+                if hasattr(model, "tie_weights"):
+                    model.tie_weights()
+
+                model.save_pretrained(ckpt_path, safe_serialization=True)
+                tokenizer.save_pretrained(ckpt_path)
+                if hasattr(model, "generation_config") and model.generation_config is not None:
+                    model.generation_config.save_pretrained(ckpt_path)
+
                 torch.save(optimizer.state_dict(), os.path.join(ckpt_path, "optimizer.pt"))
                 
                 cleanup_checkpoints(algo_dir, keep=2)
 
-        model.save_pretrained(final_model_path, safe_serialization=False)
+        # Final algorithm save following HF standard serialization
+        os.makedirs(final_model_path, exist_ok=True)
+        if hasattr(model, "tie_weights"):
+            model.tie_weights()
+
+        model.save_pretrained(final_model_path, safe_serialization=True)
+        tokenizer.save_pretrained(final_model_path)
+        if hasattr(model, "generation_config") and model.generation_config is not None:
+            model.generation_config.save_pretrained(final_model_path)
+
         clear_all_checkpoints(algo_dir)
         print(f"=== {rl_algo_name.upper()} Training Completed ===")
         

@@ -11,7 +11,15 @@ from utils.callbacks import StageTimer
 
 
 def _run_pretrain_stage(stage_name, architecture, tokenizer, dataset_path, seq_len, output_dir, config_kwargs, train_args_kwargs, resume_model_path=None):
-    if not os.path.exists(os.path.join(output_dir, "final_model", "model.safetensors")) and not os.path.exists(os.path.join(output_dir, "final_model", "pytorch_model.bin")):
+    final_model_dir = os.path.join(output_dir, "final_model")
+    
+    # Robust check for Hugging Face single-file or sharded model checkpoints
+    is_already_saved = any(
+        os.path.exists(os.path.join(final_model_dir, fname))
+        for fname in ["model.safetensors", "model.safetensors.index.json", "pytorch_model.bin", "pytorch_model.bin.index.json"]
+    )
+
+    if not is_already_saved:
         print(f"=== Starting {stage_name} ===")
         os.makedirs(output_dir, exist_ok=True)
         
@@ -49,14 +57,14 @@ def _run_pretrain_stage(stage_name, architecture, tokenizer, dataset_path, seq_l
             max_grad_norm=1.0,
             optim="adamw_torch_fused",
             save_total_limit=2,
-            # save_safetensors=False,  # Prevents RuntimeError with shared embedding tensors
+            save_safetensors=True,  # Standard Hugging Face safetensors format
             **train_args_kwargs
         )
         trainer = Trainer(
             model=model,
             args=args,
             train_dataset=ds,
-            # Passed model to callback init
+            processing_class=tokenizer,  # Standard HF Trainer tokenizer binding
             callbacks=[GradientMetricsCallback(model=model, log_file=os.path.join(output_dir, f"training_log_{stage_name}.jsonl"), plot_dir=output_dir)]
         )
         
@@ -83,15 +91,24 @@ def _run_pretrain_stage(stage_name, architecture, tokenizer, dataset_path, seq_l
         # End Stage Timing
         timer.end_stage(stage_name, start_t)
         
-        model.save_pretrained(os.path.join(output_dir, "final_model"), safe_serialization=False)
-        clear_all_checkpoints(output_dir) # Remove all checkpoints after phase finishes
+        # Save model, tokenizer, and generation config according to HF standards
+        os.makedirs(final_model_dir, exist_ok=True)
+        if hasattr(model, "tie_weights"):
+            model.tie_weights()
+            
+        model.save_pretrained(final_model_dir, safe_serialization=True)
+        tokenizer.save_pretrained(final_model_dir)
+        if hasattr(model, "generation_config") and model.generation_config is not None:
+            model.generation_config.save_pretrained(final_model_dir)
+
+        clear_all_checkpoints(output_dir) # Remove intermediate checkpoints after phase finishes
 
         del model, trainer, ds
         gc.collect()
         torch.cuda.empty_cache()
         
     clear_all_checkpoints(output_dir) # Failsafe cleanup
-    return os.path.join(output_dir, "final_model")
+    return final_model_dir
 
 
 def run_stage1_pretraining(architecture, tokenizer, base_dir):
