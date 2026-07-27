@@ -12,6 +12,27 @@ from utils import GradientMetricsCallback, get_latest_checkpoint, clear_all_chec
 from utils.callbacks import StageTimer
 
 
+def handle_weight_tying(model, config):
+    """
+    Ensures PyTorch tensor sharing matches Hugging Face safetensors configuration.
+    """
+    is_tied = getattr(config, "tie_word_embeddings", False)
+    
+    if is_tied:
+        if hasattr(model, "tie_weights"):
+            model.tie_weights()
+        # Explicitly register dynamic tied weights keys for safetensors validation
+        model._dynamic_tied_weights_keys = ["lm_head.weight", "model.embed_tokens.weight"]
+    else:
+        # If config specifies untied weights, ensure they do not share memory storage
+        input_embeds = model.get_input_embeddings()
+        output_embeds = model.get_output_embeddings()
+        
+        if input_embeds is not None and output_embeds is not None:
+            if input_embeds.weight.data_ptr() == output_embeds.weight.data_ptr():
+                output_embeds.weight = torch.nn.Parameter(output_embeds.weight.clone())
+
+
 def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path):
     stage4_dir = os.path.join(base_dir, "Stage4")
     final_model_dir = os.path.join(stage4_dir, "final_model")
@@ -38,8 +59,9 @@ def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path):
             torch_dtype=dtype,
             low_cpu_mem_usage=True
         )
-        if hasattr(model, "tie_weights"):
-            model.tie_weights()
+        
+        # Safely align weight tying with safetensors requirements
+        handle_weight_tying(model, config)
 
         ds = prepare_sft_dataset("Dolci-Think-SFT-32B", tokenizer, seq_len=1024)
 
@@ -86,8 +108,7 @@ def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path):
 
         # Save model, tokenizer, and generation config according to HF standards
         os.makedirs(final_model_dir, exist_ok=True)
-        if hasattr(model, "tie_weights"):
-            model.tie_weights()
+        handle_weight_tying(model, config)
 
         model.save_pretrained(final_model_dir, safe_serialization=True)
         tokenizer.save_pretrained(final_model_dir)
@@ -135,9 +156,10 @@ def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path):
             torch_dtype=dtype,
             low_cpu_mem_usage=True
         )
-        if hasattr(model, "tie_weights"):
-            model.tie_weights()
-            ref_model.tie_weights()
+        
+        # Safely align weight tying for model and ref_model
+        handle_weight_tying(model, config)
+        handle_weight_tying(ref_model, config)
         
         # Deactive gradient tracking natively
         ref_model.requires_grad_(False)
@@ -158,7 +180,7 @@ def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path):
             optim="adamw_torch_fused",
             beta=5.0, 
             max_length=2048,
-            # save_safetensors=True,  # Standard Hugging Face safetensors format
+            save_safetensors=True,  # Standard Hugging Face safetensors format
         )
 
         trainer = DPOTrainer(
@@ -190,8 +212,7 @@ def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path):
 
         # Save model, tokenizer, and generation config according to HF standards
         os.makedirs(final_model_dir, exist_ok=True)
-        if hasattr(model, "tie_weights"):
-            model.tie_weights()
+        handle_weight_tying(model, config)
 
         model.save_pretrained(final_model_dir, safe_serialization=True)
         tokenizer.save_pretrained(final_model_dir)
