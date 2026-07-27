@@ -106,6 +106,7 @@ def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path):
 def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path):
     stage5_dir = os.path.join(base_dir, "Stage5")
     final_model_dir = os.path.join(stage5_dir, "final_model")
+    print(final_model_dir)
 
     # Robust check for Hugging Face single-file or sharded model checkpoints
     is_already_saved = any(
