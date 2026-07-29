@@ -74,7 +74,7 @@ def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path):
             gradient_checkpointing=True,
             gradient_checkpointing_kwargs={"use_reentrant": False},
             optim="adamw_torch_fused",
-            save_safetensors=True,  # Standard Hugging Face safetensors format
+            # save_safetensors=True,  # Standard Hugging Face safetensors format
             max_length=1024
         )
 
