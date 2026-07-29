@@ -57,7 +57,7 @@ def _run_pretrain_stage(stage_name, architecture, tokenizer, dataset_path, seq_l
             max_grad_norm=1.0,
             optim="adamw_torch_fused",
             save_total_limit=2,
-            save_safetensors=True,  # Standard Hugging Face safetensors format
+            # save_safetensors=True,  # Standard Hugging Face safetensors format
             **train_args_kwargs
         )
         trainer = Trainer(
