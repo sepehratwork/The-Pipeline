@@ -6,7 +6,7 @@ import numpy as np
 from tqdm import tqdm
 
 # Define paths
-BASE_DIR = "/content/drive/MyDrive/Simulated/ModelsCheckpoints"
+BASE_DIR = f"/content/drive/MyDrive/Simulated/ModelsCheckpoints"
 OUTPUT_CSV = "/content/drive/MyDrive/Simulated/evaluation_results.csv"
 
 def get_task_cluster(task_name: str) -> str:
@@ -134,7 +134,7 @@ def aggregate_all_evaluations(base_dir, model_name, phase):
     records = []
     
     # Locate all directories containing *-metrics.json files
-    metric_files = glob.glob(os.path.join(base_dir, f"{model_name}-{phase}", "**", "*metrics.json"), recursive=True)
+    metric_files = glob.glob(os.path.join(base_dir, model_name, f"{model_name}-{phase}-evaluation-results", "**", "*metrics.json"), recursive=True)
     
     # Group metric files by directory
     dir_to_files = {}
@@ -193,4 +193,6 @@ def evaluate(model_name, phase):
     # Save to CSV
     df_results.to_csv(OUTPUT_CSV, index=False)
     print(f"=== Successfully generated summary table of {model_name} {phase} and saved to: {OUTPUT_CSV} ===\n")
-    
+
+
+evaluate("olmo3", "base")
