@@ -3,6 +3,7 @@ import glob
 import json
 import pandas as pd
 import numpy as np
+from tqdm import tqdm
 
 # Define paths
 BASE_DIR = "/content/drive/MyDrive/Simulated/ModelsCheckpoints"
@@ -145,7 +146,7 @@ def aggregate_all_evaluations(base_dir, model_name, phase):
         
     print(f"Found {len(dir_to_files)} evaluation run directories under {base_dir}.\n")
     
-    for eval_dir, files in sorted(dir_to_files.items()):
+    for eval_dir, files in tqdm(sorted(dir_to_files.items()), desc="Gathering all the evaluation results in one .csv file ..."):
         # Extract relative path components for Model and Checkpoint naming
         rel_path = os.path.relpath(eval_dir, base_dir)
         path_parts = rel_path.split(os.sep)
