@@ -121,9 +121,9 @@ def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path, hf_user
         gc.collect()
         torch.cuda.empty_cache()
 
-        # Save model to Hugging Face Hub"
-        repo_name = f"{architecture}_instruct"
-        save_to_hf_hub(final_model_dir, repo_name, hf_username=hf_username)
+    # Save model to Hugging Face Hub"
+    repo_name = f"{architecture}_instruct"
+    save_to_hf_hub(final_model_dir, repo_name, hf_username=hf_username)
 
     return final_model_dir
 
@@ -229,8 +229,8 @@ def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path, hf_user
         gc.collect()
         torch.cuda.empty_cache()
 
-        # Save model to Hugging Face Hub"
-        repo_name = f"{architecture}_preference"
-        save_to_hf_hub(final_model_dir, repo_name, hf_username=hf_username)
+    # Save model to Hugging Face Hub"
+    repo_name = f"{architecture}_preference"
+    save_to_hf_hub(final_model_dir, repo_name, hf_username=hf_username)
 
     return final_model_dir
