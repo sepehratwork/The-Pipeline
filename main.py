@@ -25,7 +25,7 @@ def main(hf_token, architecture = "olmo3", hf_username = "SepehrKerachi"):
     # ==========================================
     login(token=hf_token)
 
-    tokenizer = AutoTokenizer.from_pretrained("allenai/OLMo-2-1124-7B", trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained("allenai/OLMo-2-1124-13B", trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
