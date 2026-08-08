@@ -1,6 +1,10 @@
 import os
+import argparse
 
+from huggingface_hub import login
 from transformers import AutoTokenizer
+
+from models import MODEL_REGISTRY
 from pipeline import (
     run_stage1_pretraining,
     run_stage2_midtraining,
@@ -11,16 +15,16 @@ from pipeline import (
 )
 
 
-def main():
+def main(hf_token, architecture = "olmo3", hf_username = "SepehrKerachi"):
 
-    architecture = "olmo3"
-    hf_username = "SepehrKerachi"
     pretrain_dir = f"/content/drive/MyDrive/Simulated/ModelsCheckpoints/{architecture}/Pre-Training"
     posttrain_dir = f"/content/drive/MyDrive/Simulated/ModelsCheckpoints/{architecture}/Post-Training"
 
     # ==========================================
     # Setting up the tokenizer
     # ==========================================
+    login(token=hf_token)
+
     tokenizer = AutoTokenizer.from_pretrained("allenai/OLMo-2-1124-7B", trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -58,4 +62,34 @@ def main():
     print("Pipeline and all evaluations completed successfully!")
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(
+            description="Train a language model in the size of 1 billion parameters in different architectures..."
+        )
+
+    parser.add_argument(
+        "--architecture", "-a",
+        type=str,
+        default="olmo3",
+        help=f"Choose the name of the architecture: {list(MODEL_REGISTRY.keys())}"
+    )
+
+    parser.add_argument(
+        "--hf-username", "u",
+        type=str,
+        default="SepehrKerachi",
+        help="Your username in hugging face"
+    )
+
+    parser.add_argument(
+        "--hf-token", "t",
+        type=str,
+        help="Your hugging face token"
+    )
+
+    args = parser.parse_args()
+
+    main(
+        architecture=args.architecture,
+        hf_username=args.hf_username,
+        hf_token=args.hf_token
+    )
