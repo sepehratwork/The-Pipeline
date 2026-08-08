@@ -9,8 +9,8 @@ from tqdm import tqdm
 BASE_DIR = "/content/drive/MyDrive/Simulated/ModelsCheckpoints"
 OUTPUT_DIR = "/content/drive/MyDrive/Simulated"
 
-TABLE2_CSV = os.path.join(OUTPUT_DIR, "table2_detailed_evaluations.csv")
-TABLE6_CSV = os.path.join(OUTPUT_DIR, "table6_summary_evaluations.csv")
+TABLE2_CSV = os.path.join(OUTPUT_DIR, "detailed_evaluation_table.csv")
+TABLE6_CSV = os.path.join(OUTPUT_DIR, "summarized_evaluation_table.csv")
 
 # Define OLMo 3 Table 2 & Table 43 schema and taxonomy
 TABLE2_SCHEMA = [
