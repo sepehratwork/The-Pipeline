@@ -1,15 +1,11 @@
 import os
 import glob
 import json
+import argparse
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
 from typing import Dict, List, Tuple, Any
-
-# Define default paths
-BASE_DIR = "/content/drive/MyDrive/Simulated/ModelsCheckpoints"
-OUTPUT_SUMMARY_CSV = "/content/drive/MyDrive/Simulated/summary_evaluation_results_table6.csv"
-OUTPUT_DETAILED_CSV = "/content/drive/MyDrive/Simulated/detailed_evaluation_results_table2.csv"
 
 # Structure matching Table 2 & Table 43 from OLMo 3 Paper
 TASK_TAXONOMY = {
@@ -157,12 +153,13 @@ def collect_evaluation_data(base_dir: str, model_name: str, phase: str) -> Dict[
     """
     search_pattern = os.path.join(base_dir, model_name, f"{model_name}-{phase}-evaluation-results", "**", "*metrics.json")
     
-    print(f"🔍 [1/4] Searching for evaluation metric files...")
+    print(f"🔍 [1/4] Searching for evaluation metric files in: {search_pattern}")
     metric_files = glob.glob(search_pattern, recursive=True)
     
     if not metric_files:
         # Fallback search if path structure differs slightly
         fallback_pattern = os.path.join(base_dir, "**", "*metrics.json")
+        print(f"🔄 Retrying with fallback search pattern: {fallback_pattern}")
         metric_files = glob.glob(fallback_pattern, recursive=True)
         
     # Group metric files by run directory
@@ -252,19 +249,25 @@ def build_table2_detailed(parsed_data: Dict[str, Dict[str, Any]]) -> pd.DataFram
     return df_detailed
 
 
-def evaluate(model_name: str = "olmo3", phase: str = "base"):
+def evaluate(model_name: str, phase: str, base_dir: str, output_summary_csv: str = None, output_detailed_csv: str = None):
     """
     Main evaluation pipeline.
     """
     print("=" * 80)
-    print(f"🚀 Starting OLMo 3 Evaluation Results Processing for [{model_name.upper()} - {phase.upper()}]")
+    print(f"🚀 Starting OLMo 3 Evaluation Processing for [{model_name.upper()} - {phase.upper()}]")
     print("=" * 80 + "\n")
     
+    # Define default output paths if not specified
+    if output_summary_csv is None:
+        output_summary_csv = os.path.join(base_dir, f"{model_name}_{phase}_summary_table6.csv")
+    if output_detailed_csv is None:
+        output_detailed_csv = os.path.join(base_dir, f"{model_name}_{phase}_detailed_table2.csv")
+        
     # 1. Collect Data
-    parsed_data = collect_evaluation_data(BASE_DIR, model_name, phase)
+    parsed_data = collect_evaluation_data(base_dir, model_name, phase)
     
     if not parsed_data:
-        print("❌ No evaluation metric files found. Please check BASE_DIR and folder structure.")
+        print("❌ No evaluation metric files found. Please check base_dir and folder structure.")
         return
         
     # 2. Build Summary Table (Table 6)
@@ -274,26 +277,69 @@ def evaluate(model_name: str = "olmo3", phase: str = "base"):
     df_detailed = build_table2_detailed(parsed_data)
     
     # 4. Export CSVs
-    os.makedirs(os.path.dirname(OUTPUT_SUMMARY_CSV), exist_ok=True)
-    os.makedirs(os.path.dirname(OUTPUT_DETAILED_CSV), exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(output_summary_csv)), exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(output_detailed_csv)), exist_ok=True)
     
-    df_summary.to_csv(OUTPUT_SUMMARY_CSV, index=False)
-    df_detailed.to_csv(OUTPUT_DETAILED_CSV, index=False)
+    df_summary.to_csv(output_summary_csv, index=False)
+    df_detailed.to_csv(output_detailed_csv, index=False)
     
     # 5. Display Formatted Output
     print("\n" + "=" * 80)
     print("📋 SUMMARY TABLE (Table 6 Style - Macro Averages)")
     print("=" * 80)
     print(df_summary.to_string(index=False))
-    print(f"\n💾 Saved Summary Table to: {OUTPUT_SUMMARY_CSV}\n")
+    print(f"\n💾 Saved Summary Table to: {output_summary_csv}\n")
     
     print("=" * 80)
     print("🔬 DETAILED TABLE (Table 2 Style - Per-Benchmark Hierarchy)")
     print("=" * 80)
     print(df_detailed.to_string(index=False))
-    print(f"\n💾 Saved Detailed Table to: {OUTPUT_DETAILED_CSV}\n")
+    print(f"\n💾 Saved Detailed Table to: {output_detailed_csv}\n")
     print("✅ All evaluation tables successfully generated!")
 
 
 if __name__ == "__main__":
-    evaluate(model_name="olmo3", phase="base")
+    parser = argparse.ArgumentParser(
+        description="Extract and generate OLMo 3 paper style evaluation tables (Table 2 and Table 6) from OLMES results."
+    )
+    
+    parser.add_argument(
+        "--model-name", "-m",
+        type=str,
+        default="olmo3",
+        help="Name of the model directory/family (e.g., olmo3, my_custom_model)"
+    )
+    parser.add_argument(
+        "--phase", "-p",
+        type=str,
+        default="base",
+        help="Training phase (e.g., base, think, instruct, rlzero)"
+    )
+    parser.add_argument(
+        "--base-dir", "-b",
+        type=str,
+        default="/content/drive/MyDrive/Simulated/ModelsCheckpoints",
+        help="Path to base checkpoints directory"
+    )
+    parser.add_argument(
+        "--output-summary-csv", "-s",
+        type=str,
+        default=None,
+        help="Custom output file path for summary CSV (Table 6 style)"
+    )
+    parser.add_argument(
+        "--output-detailed-csv", "-d",
+        type=str,
+        default=None,
+        help="Custom output file path for detailed CSV (Table 2 style)"
+    )
+
+    args = parser.parse_args()
+
+    evaluate(
+        model_name=args.model_name,
+        phase=args.phase,
+        base_dir=args.base_dir,
+        output_summary_csv=args.output_summary_csv,
+        output_detailed_csv=args.output_detailed_csv
+    )
