@@ -8,7 +8,7 @@ from trl import DPOTrainer, DPOConfig
 from datasets import load_dataset
 from models import get_model_classes
 from data import prepare_sft_dataset, prepare_dpo_dataset
-from utils import GradientMetricsCallback, get_latest_checkpoint, clear_all_checkpoints
+from utils import GradientMetricsCallback, get_latest_checkpoint, clear_all_checkpoints, save_to_hf_hub
 from utils.callbacks import StageTimer
 
 
@@ -33,7 +33,7 @@ def handle_weight_tying(model, config):
                 output_embeds.weight = torch.nn.Parameter(output_embeds.weight.clone())
 
 
-def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path):
+def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path, hf_username):
     stage4_dir = os.path.join(base_dir, "Stage4")
     final_model_dir = os.path.join(stage4_dir, "final_model")
 
@@ -121,10 +121,14 @@ def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path):
         gc.collect()
         torch.cuda.empty_cache()
 
+        # Save model to Hugging Face Hub"
+        repo_name = f"{architecture}_instruct"
+        save_to_hf_hub(final_model_dir, repo_name, hf_username=hf_username)
+
     return final_model_dir
 
 
-def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path):
+def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path, hf_username):
     stage5_dir = os.path.join(base_dir, "Stage5")
     final_model_dir = os.path.join(stage5_dir, "final_model")
     print(final_model_dir)
@@ -180,7 +184,7 @@ def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path):
             optim="adamw_torch_fused",
             beta=5.0, 
             max_length=2048,
-            save_safetensors=True,  # Standard Hugging Face safetensors format
+            # save_safetensors=True,  # Standard Hugging Face safetensors format
         )
 
         trainer = DPOTrainer(
@@ -224,5 +228,9 @@ def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path):
         del model, ref_model, trainer, ds
         gc.collect()
         torch.cuda.empty_cache()
+
+        # Save model to Hugging Face Hub"
+        repo_name = f"{architecture}_preference"
+        save_to_hf_hub(final_model_dir, repo_name, hf_username=hf_username)
 
     return final_model_dir

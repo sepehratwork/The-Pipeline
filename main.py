@@ -53,9 +53,9 @@ def main(hf_token, architecture = "olmo3", hf_username = "SepehrKerachi"):
     # Post-training Stages & OLMo 3 Evaluation
     # ==========================================
     
-    stage4_model = run_stage4_sft(architecture, tokenizer, posttrain_dir, stage3_model)
+    stage4_model = run_stage4_sft(architecture, tokenizer, posttrain_dir, stage3_model, hf_username=hf_username)
 
-    stage5_model = run_stage5_dpo(architecture, tokenizer, posttrain_dir, stage4_model)
+    stage5_model = run_stage5_dpo(architecture, tokenizer, posttrain_dir, stage4_model, hf_username=hf_username)
 
     stage6_model = run_stage6_rlvr(architecture, tokenizer, posttrain_dir, stage5_model, hf_username=hf_username)
 
