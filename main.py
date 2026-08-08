@@ -74,14 +74,14 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-        "--hf-username", "u",
+        "--hf-username", "-u",
         type=str,
         default="SepehrKerachi",
         help="Your username in hugging face"
     )
 
     parser.add_argument(
-        "--hf-token", "t",
+        "--hf-token", "-t",
         type=str,
         help="Your hugging face token"
     )
