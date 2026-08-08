@@ -7,6 +7,8 @@ import numpy as np
 from tqdm import tqdm
 from typing import Dict, List, Tuple, Any
 
+from models import MODEL_REGISTRY
+
 # Structure matching Table 2 & Table 43 from OLMo 3 Paper
 TASK_TAXONOMY = {
     "OlmoBaseEval Math": {
@@ -307,13 +309,13 @@ if __name__ == "__main__":
         "--model-name", "-m",
         type=str,
         default="olmo3",
-        help="Name of the model directory/family (e.g., olmo3, my_custom_model)"
+        help=f"Name of the model directory/family (e.g., {list(MODEL_REGISTRY.keys())})"
     )
     parser.add_argument(
         "--phase", "-p",
         type=str,
         default="base",
-        help="Training phase (e.g., base, think, instruct, rlzero)"
+        help="Training phase (e.g., base, instruct, preference, grpo, etc.)"
     )
     parser.add_argument(
         "--base-dir", "-b",
@@ -324,13 +326,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--output-summary-csv", "-s",
         type=str,
-        default=None,
+        default="/content/drive/MyDrive/Simulated/summarized_evaluation_results_table.csv",
         help="Custom output file path for summary CSV (Table 6 style)"
     )
     parser.add_argument(
         "--output-detailed-csv", "-d",
         type=str,
-        default=None,
+        default="/content/drive/MyDrive/Simulated/detailed_evaluation_results_table.csv",
         help="Custom output file path for detailed CSV (Table 2 style)"
     )
 
