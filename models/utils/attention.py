@@ -1,13 +1,16 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from typing import Optional, Tuple
 
 from .normalization import RMSNorm
 from .positional_encoding import RotaryPositionalEmbedding, apply_rotary_pos_emb
 
 
 class GroupedQueryAttention(nn.Module):
-    """Grouped Query Attention (GQA) with optional Sliding Window Attention (SWA)"""
+    """
+    Grouped Query Attention (GQA) with optional QK-Normalization and Sliding Window Attention.
+    """
     def __init__(self, config, layer_idx: int):
         super().__init__()
         self.config = config
@@ -18,27 +21,49 @@ class GroupedQueryAttention(nn.Module):
         self.num_key_value_heads = config.num_key_value_heads
         self.num_key_value_groups = self.num_heads // self.num_key_value_heads
 
+        # QKV Projections (Bias-free for Qwen3/OLMo3)
         self.q_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=False)
         self.k_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False)
         self.v_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False)
         self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=False)
 
-        self.q_norm = RMSNorm(self.num_heads * self.head_dim)
-        self.k_norm = RMSNorm(self.num_key_value_heads * self.head_dim)
+        # QK-Normalization layer
+        eps = getattr(config, "rms_norm_eps", 1e-6)
+        self.q_norm = RMSNorm(self.num_heads * self.head_dim, eps=eps)
+        self.k_norm = RMSNorm(self.num_key_value_heads * self.head_dim, eps=eps)
 
-        # OLMo 3 uses full attention on 1 out of 4 layers and the last layer
-        self.is_full_attention = (layer_idx % 4 == 3) or (layer_idx == config.num_hidden_layers - 1)
-        self.is_swa = not self.is_full_attention
+        # Determine if Sliding Window Attention (SWA) or Full Attention is used
+        use_swa_config = getattr(config, "sliding_window", None) is not None
+        if use_swa_config and getattr(config, "architecture", "") == "olmo3":
+            self.is_full_attention = (layer_idx % 4 == 3) or (layer_idx == config.num_hidden_layers - 1)
+            self.is_swa = not self.is_full_attention
+        else:
+            self.is_full_attention = True
+            self.is_swa = False
 
-        use_yarn_here = config.use_yarn and self.is_full_attention
+        use_yarn_here = getattr(config, "use_yarn", False) and self.is_full_attention
+        rope_theta = getattr(config, "rope_theta", 1000000.0)
+        max_pos = getattr(config, "max_position_embeddings", 32768)
+        orig_max = getattr(config, "original_max_position_embeddings", max_pos)
+
         self.rotary_emb = RotaryPositionalEmbedding(
-            self.head_dim, max_position_embeddings=config.max_position_embeddings,
-            base=config.rope_theta, use_yarn=use_yarn_here, original_max=config.original_max_position_embeddings
+            self.head_dim,
+            max_position_embeddings=max_pos,
+            base=rope_theta,
+            use_yarn=use_yarn_here,
+            original_max=orig_max,
         )
 
-    def forward(self, hidden_states, attention_mask=None, position_ids=None, past_key_value=None):
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_value: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+    ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         bsz, q_len, _ = hidden_states.size()
 
+        # Compute Q, K, V and apply QK-Norm
         q = self.q_norm(self.q_proj(hidden_states)).view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
         k = self.k_norm(self.k_proj(hidden_states)).view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
         v = self.v_proj(hidden_states).view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
@@ -63,12 +88,14 @@ class GroupedQueryAttention(nn.Module):
         else:
             if q_len == kv_seq_len:
                 causal_mask = torch.ones((bsz, 1, q_len, kv_seq_len), device=q.device, dtype=torch.bool).tril_()
-                if self.is_swa: causal_mask.triu_(diagonal=-self.config.sliding_window + 1)
+                if self.is_swa:
+                    causal_mask.triu_(diagonal=-self.config.sliding_window + 1)
             else:
                 row_idx = torch.arange(kv_seq_len - q_len, kv_seq_len, device=q.device).unsqueeze(1)
                 col_idx = torch.arange(kv_seq_len, device=q.device).unsqueeze(0)
                 causal_mask = row_idx >= col_idx
-                if self.is_swa: causal_mask &= (row_idx < col_idx + self.config.sliding_window)
+                if self.is_swa:
+                    causal_mask &= (row_idx < col_idx + self.config.sliding_window)
                 causal_mask = causal_mask.unsqueeze(0).unsqueeze(0).expand(bsz, 1, q_len, kv_seq_len).clone()
 
             if attention_mask is not None:

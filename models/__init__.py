@@ -1,4 +1,4 @@
-from .architectures import OLMo3Config, OLMo3ForCausalLM
+from .architectures import OLMo3Config, OLMo3ForCausalLM, Qwen3Config, Qwen3ForCausalLM
 from .utils import (
     RMSNorm,
     RotaryPositionalEmbedding,
@@ -8,11 +8,10 @@ from .utils import (
     GroupedQueryAttention,
 )
 
-# Future models can be added here and mapped
+# Registry mapping model architecture names to Config and Model classes
 MODEL_REGISTRY = {
     "olmo3": (OLMo3Config, OLMo3ForCausalLM),
-    # "deepseek": (DeepseekConfig, DeepseekForCausalLM),
-    # "qwen": (QwenConfig, QwenForCausalLM),
+    "qwen3": (Qwen3Config, Qwen3ForCausalLM),
 }
 
 
