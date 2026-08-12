@@ -64,6 +64,53 @@ class MiniMaxM2Config(PretrainedConfig):
         super().__init__(tie_word_embeddings=tie_word_embeddings, **kwargs)
 
 
+class MiniMaxM2TestConfig(MiniMaxM2Config):
+    """
+    Test configuration for MiniMax-M2 scaled to ~200M active parameters.
+    """
+    architecture = "minimax_m2_test"
+
+    def __init__(
+        self,
+        vocab_size=100278,
+        hidden_size=768,
+        intermediate_size=256,
+        num_hidden_layers=12,
+        num_attention_heads=8,
+        num_key_value_heads=2,
+        num_experts=32,
+        num_experts_per_tok=4,
+        num_shared_experts=1,
+        shared_expert_intermediate_size=512,
+        max_position_embeddings=32768,
+        rope_theta=500000.0,
+        rms_norm_eps=1e-6,
+        num_mtp_modules=1,
+        mtp_loss_factor=0.3,
+        tie_word_embeddings=True,
+        **kwargs
+    ):
+        super().__init__(
+            vocab_size=vocab_size,
+            hidden_size=hidden_size,
+            intermediate_size=intermediate_size,
+            num_hidden_layers=num_hidden_layers,
+            num_attention_heads=num_attention_heads,
+            num_key_value_heads=num_key_value_heads,
+            num_experts=num_experts,
+            num_experts_per_tok=num_experts_per_tok,
+            num_shared_experts=num_shared_experts,
+            shared_expert_intermediate_size=shared_expert_intermediate_size,
+            max_position_embeddings=max_position_embeddings,
+            rope_theta=rope_theta,
+            rms_norm_eps=rms_norm_eps,
+            num_mtp_modules=num_mtp_modules,
+            mtp_loss_factor=mtp_loss_factor,
+            tie_word_embeddings=tie_word_embeddings,
+            **kwargs
+        )
+
+
 class MiniMaxM2Block(nn.Module):
     """
     Transformer block for MiniMax-M2 containing Full Multi-Head Self-Attention

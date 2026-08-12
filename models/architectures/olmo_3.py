@@ -8,7 +8,7 @@ from ..utils.mlp import SwiGLUMLP
 from ..utils.attention import GroupedQueryAttention
 
 
-class OLMo3Config(PretrainedConfig):
+class OLMo3TestConfig(PretrainedConfig):
     architecture = "olmo3"
     def __init__(
         self, 
@@ -44,7 +44,7 @@ class OLMo3Config(PretrainedConfig):
 
 
 class OLMo3Block(nn.Module):
-    def __init__(self, config: OLMo3Config, layer_idx: int):
+    def __init__(self, config: OLMo3TestConfig, layer_idx: int):
         super().__init__()
         self.input_layernorm = RMSNorm(config.hidden_size)
         self.self_attn = GroupedQueryAttention(config, layer_idx)
@@ -64,7 +64,7 @@ class OLMo3Block(nn.Module):
 
 
 class OLMo3PreTrainedModel(PreTrainedModel):
-    config_class = OLMo3Config
+    config_class = OLMo3TestConfig
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
 
@@ -82,7 +82,7 @@ class OLMo3PreTrainedModel(PreTrainedModel):
 
 
 class OLMo3Model(OLMo3PreTrainedModel):
-    def __init__(self, config: OLMo3Config):
+    def __init__(self, config: OLMo3TestConfig):
         super().__init__(config)
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size)
         self.layers = nn.ModuleList([OLMo3Block(config, i) for i in range(config.num_hidden_layers)])
@@ -116,7 +116,7 @@ class OLMo3Model(OLMo3PreTrainedModel):
 
 
 class OLMo3ForCausalLM(OLMo3PreTrainedModel, GenerationMixin):
-    def __init__(self, config: OLMo3Config):
+    def __init__(self, config: OLMo3TestConfig):
         super().__init__(config)
         self.model = OLMo3Model(config)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)

@@ -70,6 +70,61 @@ class Qwen3Config(PretrainedConfig):
         super().__init__(tie_word_embeddings=tie_word_embeddings, **kwargs)
 
 
+class Qwen3TestConfig(Qwen3Config):
+    """
+    Test configuration for Qwen3 scaled to ~200M parameters.
+    """
+    model_type = "qwen3_test"
+
+    def __init__(
+        self,
+        vocab_size: int = 151669,
+        hidden_size: int = 768,
+        intermediate_size: int = 2048,
+        num_hidden_layers: int = 12,
+        num_attention_heads: int = 12,
+        num_key_value_heads: int = 2,
+        max_position_embeddings: int = 16384,
+        rope_theta: float = 1000000.0,
+        rms_norm_eps: float = 1e-6,
+        use_sliding_window: bool = False,
+        sliding_window: Optional[int] = None,
+        z_loss_weight: float = 1e-5,
+        tie_word_embeddings: bool = True,
+        is_moe: bool = False,
+        num_experts: int = 64,
+        num_experts_per_tok: int = 4,
+        moe_intermediate_size: int = 352,
+        router_aux_loss_coef: float = 0.01,
+        enable_thinking: bool = True,
+        thinking_budget: Optional[int] = None,
+        **kwargs
+    ):
+        super().__init__(
+            vocab_size=vocab_size,
+            hidden_size=hidden_size,
+            intermediate_size=intermediate_size,
+            num_hidden_layers=num_hidden_layers,
+            num_attention_heads=num_attention_heads,
+            num_key_value_heads=num_key_value_heads,
+            max_position_embeddings=max_position_embeddings,
+            rope_theta=rope_theta,
+            rms_norm_eps=rms_norm_eps,
+            use_sliding_window=use_sliding_window,
+            sliding_window=sliding_window,
+            z_loss_weight=z_loss_weight,
+            tie_word_embeddings=tie_word_embeddings,
+            is_moe=is_moe,
+            num_experts=num_experts,
+            num_experts_per_tok=num_experts_per_tok,
+            moe_intermediate_size=moe_intermediate_size,
+            router_aux_loss_coef=router_aux_loss_coef,
+            enable_thinking=enable_thinking,
+            thinking_budget=thinking_budget,
+            **kwargs
+        )
+
+
 class Qwen3DecoderLayer(nn.Module):
     """
     Standard Qwen3 Dense Transformer Layer:

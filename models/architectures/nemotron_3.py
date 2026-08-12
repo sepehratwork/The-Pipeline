@@ -65,6 +65,56 @@ class Nemotron3Config(PretrainedConfig):
         super().__init__(tie_word_embeddings=tie_word_embeddings, **kwargs)
 
 
+class Nemotron3TestConfig(Nemotron3Config):
+    """
+    Test configuration for Nemotron 3 scaled to ~200M active parameters.
+    """
+    architecture = "nemotron_3_test"
+
+    def __init__(
+        self,
+        vocab_size: int = 100278,
+        hidden_size: int = 768,
+        intermediate_size: int = 2048,
+        num_hidden_layers: int = 12,
+        num_attention_heads: int = 8,
+        num_key_value_heads: int = 2,
+        attn_layer_indices: Optional[List[int]] = None,
+        max_position_embeddings: int = 131072,
+        is_moe: bool = True,
+        latent_dim: int = 192,
+        num_routed_experts: int = 16,
+        num_active_experts: int = 2,
+        use_mtp: bool = True,
+        num_mtp_tokens: int = 2,
+        z_loss_weight: float = 1e-5,
+        tie_word_embeddings: bool = True,
+        **kwargs
+    ):
+        if attn_layer_indices is None:
+            attn_layer_indices = [3, 7, 11]
+
+        super().__init__(
+            vocab_size=vocab_size,
+            hidden_size=hidden_size,
+            intermediate_size=intermediate_size,
+            num_hidden_layers=num_hidden_layers,
+            num_attention_heads=num_attention_heads,
+            num_key_value_heads=num_key_value_heads,
+            attn_layer_indices=attn_layer_indices,
+            max_position_embeddings=max_position_embeddings,
+            is_moe=is_moe,
+            latent_dim=latent_dim,
+            num_routed_experts=num_routed_experts,
+            num_active_experts=num_active_experts,
+            use_mtp=use_mtp,
+            num_mtp_tokens=num_mtp_tokens,
+            z_loss_weight=z_loss_weight,
+            tie_word_embeddings=tie_word_embeddings,
+            **kwargs
+        )
+
+
 class Nemotron3Block(nn.Module):
     """
     Nemotron 3 Hybrid Decoder Block.

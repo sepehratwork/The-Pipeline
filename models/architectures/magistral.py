@@ -65,6 +65,61 @@ class MagistralConfig(PretrainedConfig):
         super().__init__(tie_word_embeddings=tie_word_embeddings, **kwargs)
 
 
+class MagistralTestConfig(MagistralConfig):
+    """
+    Test configuration for Magistral scaled to ~200M parameters.
+    """
+    architecture = "magistral_test"
+
+    def __init__(
+        self,
+        vocab_size: int = 32768,
+        hidden_size: int = 896,
+        intermediate_size: int = 2432,
+        num_hidden_layers: int = 16,
+        num_attention_heads: int = 14,
+        num_key_value_heads: int = 2,
+        head_dim: int = 64,
+        max_position_embeddings: int = 16384,
+        sliding_window: int = 2048,
+        rope_theta: float = 1000000.0,
+        rms_norm_eps: float = 1e-6,
+        use_moe: bool = False,
+        num_local_experts: int = 8,
+        num_experts_per_tok: int = 2,
+        moe_intermediate_size: int = 512,
+        num_shared_experts: int = 1,
+        z_loss_weight: float = 1e-5,
+        use_yarn: bool = False,
+        original_max_position_embeddings: int = 8192,
+        tie_word_embeddings: bool = True,
+        **kwargs
+    ):
+        super().__init__(
+            vocab_size=vocab_size,
+            hidden_size=hidden_size,
+            intermediate_size=intermediate_size,
+            num_hidden_layers=num_hidden_layers,
+            num_attention_heads=num_attention_heads,
+            num_key_value_heads=num_key_value_heads,
+            head_dim=head_dim,
+            max_position_embeddings=max_position_embeddings,
+            sliding_window=sliding_window,
+            rope_theta=rope_theta,
+            rms_norm_eps=rms_norm_eps,
+            use_moe=use_moe,
+            num_local_experts=num_local_experts,
+            num_experts_per_tok=num_experts_per_tok,
+            moe_intermediate_size=moe_intermediate_size,
+            num_shared_experts=num_shared_experts,
+            z_loss_weight=z_loss_weight,
+            use_yarn=use_yarn,
+            original_max_position_embeddings=original_max_position_embeddings,
+            tie_word_embeddings=tie_word_embeddings,
+            **kwargs
+        )
+
+
 class MagistralDecoderLayer(nn.Module):
     """
     Decoder layer for Magistral language model.

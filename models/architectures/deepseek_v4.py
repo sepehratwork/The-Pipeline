@@ -74,6 +74,73 @@ class DeepSeekV4Config(PretrainedConfig):
         super().__init__(tie_word_embeddings=tie_word_embeddings, **kwargs)
 
 
+class DeepSeekV4TestConfig(DeepSeekV4Config):
+    """
+    Test configuration for DeepSeek-V4 scaled to ~200M active parameters.
+    """
+    model_type = "deepseek_v4_test"
+
+    def __init__(
+        self,
+        vocab_size=100278,
+        hidden_size=768,
+        intermediate_size=2048,
+        num_hidden_layers=12,
+        num_attention_heads=8,
+        num_key_value_heads=2,
+        max_position_embeddings=8192,
+        rope_theta=500000.0,
+        n_hc=4,
+        t_max=20,
+        compression_rate=4,
+        heavy_compression_rate=128,
+        head_dim=128,
+        attention_topk=128,
+        q_lora_rank=256,
+        indexer_heads=8,
+        indexer_dim=32,
+        num_projection_groups=2,
+        group_intermediate_dim=256,
+        window_size=128,
+        num_routed_experts=32,
+        num_active_experts=4,
+        num_shared_experts=1,
+        hash_routing_layers=2,
+        z_loss_weight=1e-5,
+        tie_word_embeddings=True,
+        **kwargs
+    ):
+        super().__init__(
+            vocab_size=vocab_size,
+            hidden_size=hidden_size,
+            intermediate_size=intermediate_size,
+            num_hidden_layers=num_hidden_layers,
+            num_attention_heads=num_attention_heads,
+            num_key_value_heads=num_key_value_heads,
+            max_position_embeddings=max_position_embeddings,
+            rope_theta=rope_theta,
+            n_hc=n_hc,
+            t_max=t_max,
+            compression_rate=compression_rate,
+            heavy_compression_rate=heavy_compression_rate,
+            head_dim=head_dim,
+            attention_topk=attention_topk,
+            q_lora_rank=q_lora_rank,
+            indexer_heads=indexer_heads,
+            indexer_dim=indexer_dim,
+            num_projection_groups=num_projection_groups,
+            group_intermediate_dim=group_intermediate_dim,
+            window_size=window_size,
+            num_routed_experts=num_routed_experts,
+            num_active_experts=num_active_experts,
+            num_shared_experts=num_shared_experts,
+            hash_routing_layers=hash_routing_layers,
+            z_loss_weight=z_loss_weight,
+            tie_word_embeddings=tie_word_embeddings,
+            **kwargs
+        )
+
+
 class DeepSeekV4Block(nn.Module):
     """
     Transformer Block for DeepSeek-V4 with mHC residual connections and Hybrid Attention/MoE.

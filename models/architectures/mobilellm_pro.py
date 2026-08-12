@@ -52,6 +52,44 @@ class MobileLLMProConfig(PretrainedConfig):
         super().__init__(tie_word_embeddings=tie_word_embeddings, **kwargs)
 
 
+class MobileLLMProTestConfig(MobileLLMProConfig):
+    """
+    Test configuration for MobileLLM-Pro scaled to ~200M parameters.
+    """
+    architecture = "mobilellm_pro_test"
+    model_type = "mobilellm_pro_test"
+
+    def __init__(
+        self,
+        vocab_size=202048,
+        hidden_size=640,
+        intermediate_size=3072,
+        num_hidden_layers=16,
+        num_attention_heads=10,
+        num_key_value_heads=2,
+        max_position_embeddings=32768,
+        sliding_window=512,
+        rope_theta=500000.0,
+        rms_norm_eps=1e-5,
+        tie_word_embeddings=True,
+        **kwargs
+    ):
+        super().__init__(
+            vocab_size=vocab_size,
+            hidden_size=hidden_size,
+            intermediate_size=intermediate_size,
+            num_hidden_layers=num_hidden_layers,
+            num_attention_heads=num_attention_heads,
+            num_key_value_heads=num_key_value_heads,
+            max_position_embeddings=max_position_embeddings,
+            sliding_window=sliding_window,
+            rope_theta=rope_theta,
+            rms_norm_eps=rms_norm_eps,
+            tie_word_embeddings=tie_word_embeddings,
+            **kwargs
+        )
+
+
 class MobileLLMProBlock(nn.Module):
     """Individual MobileLLM-Pro Transformer Layer with RMSNorm, GQA/SWA, and SwiGLU FFN."""
     def __init__(self, config: MobileLLMProConfig, layer_idx: int):

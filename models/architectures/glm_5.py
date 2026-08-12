@@ -78,6 +78,71 @@ class GLM5Config(PretrainedConfig):
         super().__init__(tie_word_embeddings=tie_word_embeddings, **kwargs)
 
 
+class GLM5TestConfig(GLM5Config):
+    """
+    Test configuration for GLM-5 scaled to ~200M active parameters.
+    """
+    architecture = "glm_5_test"
+
+    def __init__(
+        self,
+        vocab_size: int = 154880,
+        hidden_size: int = 768,
+        intermediate_size: int = 2048,
+        moe_intermediate_size: int = 512,
+        num_hidden_layers: int = 12,
+        num_dense_layers: int = 2,
+        num_attention_heads: int = 12,
+        qk_head_dim: int = 64,
+        v_head_dim: int = 64,
+        rope_head_dim: int = 32,
+        q_lora_rank: int = 256,
+        kv_lora_rank: int = 128,
+        num_routed_experts: int = 32,
+        num_active_experts: int = 4,
+        num_shared_experts: int = 1,
+        hash_routing_layers: int = 0,
+        max_position_embeddings: int = 32768,
+        rope_theta: float = 1000000.0,
+        use_yarn: bool = True,
+        original_max_position_embeddings: int = 8192,
+        z_loss_weight: float = 1e-5,
+        use_dsa: bool = False,
+        topk_indexer: int = 32,
+        rms_norm_eps: float = 1e-6,
+        tie_word_embeddings: bool = True,
+        **kwargs
+    ):
+        super().__init__(
+            vocab_size=vocab_size,
+            hidden_size=hidden_size,
+            intermediate_size=intermediate_size,
+            moe_intermediate_size=moe_intermediate_size,
+            num_hidden_layers=num_hidden_layers,
+            num_dense_layers=num_dense_layers,
+            num_attention_heads=num_attention_heads,
+            qk_head_dim=qk_head_dim,
+            v_head_dim=v_head_dim,
+            rope_head_dim=rope_head_dim,
+            q_lora_rank=q_lora_rank,
+            kv_lora_rank=kv_lora_rank,
+            num_routed_experts=num_routed_experts,
+            num_active_experts=num_active_experts,
+            num_shared_experts=num_shared_experts,
+            hash_routing_layers=hash_routing_layers,
+            max_position_embeddings=max_position_embeddings,
+            rope_theta=rope_theta,
+            use_yarn=use_yarn,
+            original_max_position_embeddings=original_max_position_embeddings,
+            z_loss_weight=z_loss_weight,
+            use_dsa=use_dsa,
+            topk_indexer=topk_indexer,
+            rms_norm_eps=rms_norm_eps,
+            tie_word_embeddings=tie_word_embeddings,
+            **kwargs
+        )
+
+
 class GLM5Block(nn.Module):
     """
     GLM-5 Transformer Block.

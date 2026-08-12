@@ -107,6 +107,59 @@ class KimiK3Config(PretrainedConfig):
         super().__init__(tie_word_embeddings=tie_word_embeddings, **kwargs)
 
 
+class KimiK3TestConfig(KimiK3Config):
+    """
+    Test configuration for Kimi K3 scaled to ~200M active parameters.
+    """
+    architecture = "kimi_k3_test"
+
+    def __init__(
+        self,
+        vocab_size: int = 160000,
+        hidden_size: int = 768,
+        num_hidden_layers: int = 12,
+        num_attention_heads: int = 8,
+        head_dim: int = 96,
+        kda_ratio: int = 3,
+        latent_dim: int = 384,
+        num_routed_experts: int = 32,
+        num_active_experts: int = 4,
+        num_shared_experts: int = 1,
+        moe_intermediate_size: int = 512,
+        shared_intermediate_size: int = 1024,
+        dense_intermediate_size: int = 2048,
+        use_moe: bool = True,
+        attn_res_num_blocks: int = 4,
+        max_position_embeddings: int = 128000,
+        rms_norm_eps: float = 1e-6,
+        z_loss_weight: float = 1e-5,
+        tie_word_embeddings: bool = True,
+        **kwargs
+    ):
+        super().__init__(
+            vocab_size=vocab_size,
+            hidden_size=hidden_size,
+            num_hidden_layers=num_hidden_layers,
+            num_attention_heads=num_attention_heads,
+            head_dim=head_dim,
+            kda_ratio=kda_ratio,
+            latent_dim=latent_dim,
+            num_routed_experts=num_routed_experts,
+            num_active_experts=num_active_experts,
+            num_shared_experts=num_shared_experts,
+            moe_intermediate_size=moe_intermediate_size,
+            shared_intermediate_size=shared_intermediate_size,
+            dense_intermediate_size=dense_intermediate_size,
+            use_moe=use_moe,
+            attn_res_num_blocks=attn_res_num_blocks,
+            max_position_embeddings=max_position_embeddings,
+            rms_norm_eps=rms_norm_eps,
+            z_loss_weight=z_loss_weight,
+            tie_word_embeddings=tie_word_embeddings,
+            **kwargs
+        )
+
+
 class KimiK3Block(nn.Module):
     """
     Building block for Kimi K3, integrating Attention (KDA or Gated MLA),
