@@ -123,7 +123,7 @@ class MagistralDecoderLayer(nn.Module):
     Decoder layer for Magistral language model.
     Composes pre-layernorm RMSNorm, Grouped Query Attention (GQA), and SwiGLU MLP / TopKMoE.
     """
-    def __init__(self, config: MagistralConfig, layer_idx: int):
+    def __init__(self, config: MagistralTestConfig, layer_idx: int):
         super().__init__()
         self.layer_idx = layer_idx
         self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
@@ -167,7 +167,7 @@ class MagistralPreTrainedModel(PreTrainedModel):
     Base PreTrainedModel class for Magistral architecture weight initialization
     and Hugging Face compatibility.
     """
-    config_class = MagistralConfig
+    config_class = MagistralTestConfig
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
 
@@ -190,7 +190,7 @@ class MagistralModel(MagistralPreTrainedModel):
     """
     Transformer core decoder for Magistral reasoning language model.
     """
-    def __init__(self, config: MagistralConfig):
+    def __init__(self, config: MagistralTestConfig):
         super().__init__(config)
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size)
         self.layers = nn.ModuleList([
@@ -253,7 +253,7 @@ class MagistralForCausalLM(MagistralPreTrainedModel, GenerationMixin):
     Magistral Causal Language Model with LM Head for auto-regressive generation
     and reinforcement learning from verifiable rewards (RLVR).
     """
-    def __init__(self, config: MagistralConfig):
+    def __init__(self, config: MagistralTestConfig):
         super().__init__(config)
         self.model = MagistralModel(config)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)

@@ -119,7 +119,7 @@ class Nemotron3Block(nn.Module):
     Predominantly interleaves Mamba-2 layers with MoE/MLP layers, with a select few
     self-attention layers (No-RoPE GQA) to achieve high efficiency and context scaling.
     """
-    def __init__(self, config: Nemotron3Config, layer_idx: int):
+    def __init__(self, config: Nemotron3TestConfig, layer_idx: int):
         super().__init__()
         self.layer_idx = layer_idx
         self.is_attn_layer = layer_idx in config.attn_layer_indices
@@ -179,7 +179,7 @@ class MultiTokenPredictionHead(nn.Module):
 
 class Nemotron3PreTrainedModel(PreTrainedModel):
     """Base class for Nemotron 3 pretrained models handling weights initialization."""
-    config_class = Nemotron3Config
+    config_class = Nemotron3TestConfig
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
 
@@ -200,7 +200,7 @@ class Nemotron3PreTrainedModel(PreTrainedModel):
 
 class Nemotron3Model(Nemotron3PreTrainedModel):
     """Core Nemotron 3 Transformer stack."""
-    def __init__(self, config: Nemotron3Config):
+    def __init__(self, config: Nemotron3TestConfig):
         super().__init__(config)
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size)
         self.layers = nn.ModuleList([Nemotron3Block(config, i) for i in range(config.num_hidden_layers)])
@@ -247,7 +247,7 @@ class Nemotron3ForCausalLM(Nemotron3PreTrainedModel, GenerationMixin):
     Features granular reasoning budget control and optional Multi-Token Prediction (MTP).
     Scaled to ~1 Billion Active Parameters per token.
     """
-    def __init__(self, config: Nemotron3Config):
+    def __init__(self, config: Nemotron3TestConfig):
         config.is_moe = True
         super().__init__(config)
         self.model = Nemotron3Model(config)
@@ -332,7 +332,7 @@ class Nemotron3DenseForCausalLM(Nemotron3PreTrainedModel, GenerationMixin):
     (Mamba-2 + Transformer Dense Feed-Forward layers).
     Scaled to ~1 Billion Parameters.
     """
-    def __init__(self, config: Nemotron3Config):
+    def __init__(self, config: Nemotron3TestConfig):
         config.is_moe = False
         super().__init__(config)
         self.model = Nemotron3Model(config)

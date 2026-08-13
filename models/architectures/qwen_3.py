@@ -130,7 +130,7 @@ class Qwen3DecoderLayer(nn.Module):
     - Grouped Query Attention (GQA) with QK-Norm and no QKV-bias
     - SwiGLU MLP
     """
-    def __init__(self, config: Qwen3Config, layer_idx: int):
+    def __init__(self, config: Qwen3TestConfig, layer_idx: int):
         super().__init__()
         self.hidden_size = config.hidden_size
         self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
@@ -172,7 +172,7 @@ class Qwen3MoEDecoderLayer(nn.Module):
     - Grouped Query Attention (GQA) with QK-Norm
     - Fine-Grained MoE Block (128 total experts, 8 active per token, NO shared experts)
     """
-    def __init__(self, config: Qwen3Config, layer_idx: int):
+    def __init__(self, config: Qwen3TestConfig, layer_idx: int):
         super().__init__()
         self.hidden_size = config.hidden_size
         self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
@@ -209,7 +209,7 @@ class Qwen3MoEDecoderLayer(nn.Module):
 
 class Qwen3PreTrainedModel(PreTrainedModel):
     """Base class for Qwen3 models handling weight initialization and checkpointing."""
-    config_class = Qwen3Config
+    config_class = Qwen3TestConfig
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
 
@@ -229,7 +229,7 @@ class Qwen3Model(Qwen3PreTrainedModel):
     """
     Qwen3 Core Transformer Decoder Pipeline supporting both Dense and MoE architectures.
     """
-    def __init__(self, config: Qwen3Config):
+    def __init__(self, config: Qwen3TestConfig):
         super().__init__(config)
         self.vocab_size = config.vocab_size
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size)
@@ -301,7 +301,7 @@ class Qwen3ForCausalLM(Qwen3PreTrainedModel, GenerationMixin):
     """
     Qwen3 Dense Causal Language Model with Causal LM Loss and Thinking Budget Enforcement.
     """
-    def __init__(self, config: Qwen3Config):
+    def __init__(self, config: Qwen3TestConfig):
         super().__init__(config)
         self.model = Qwen3Model(config)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
@@ -389,6 +389,6 @@ class Qwen3MoEForCausalLM(Qwen3ForCausalLM):
     Qwen3 Mixture-of-Experts (MoE) Causal Language Model.
     Inherits from Qwen3ForCausalLM with `is_moe=True` default setting.
     """
-    def __init__(self, config: Qwen3Config):
+    def __init__(self, config: Qwen3TestConfig):
         config.is_moe = True
         super().__init__(config)

@@ -114,7 +114,7 @@ class MiniMaxM2Block(nn.Module):
     Transformer block for MiniMax-M2 containing Full Multi-Head Self-Attention
     with Grouped Query Attention (GQA) and Fine-Grained MoE with Sigmoid Gating.
     """
-    def __init__(self, config: MiniMaxM2Config, layer_idx: int):
+    def __init__(self, config: MiniMaxM2TestConfig, layer_idx: int):
         super().__init__()
         self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.self_attn = GroupedQueryAttention(config, layer_idx)
@@ -134,7 +134,7 @@ class MiniMaxM2Block(nn.Module):
 
 
 class MiniMaxM2PreTrainedModel(PreTrainedModel):
-    config_class = MiniMaxM2Config
+    config_class = MiniMaxM2TestConfig
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
 
@@ -154,7 +154,7 @@ class MiniMaxM2Model(MiniMaxM2PreTrainedModel):
     """
     Core Transformer decoder model for MiniMax-M2.
     """
-    def __init__(self, config: MiniMaxM2Config):
+    def __init__(self, config: MiniMaxM2TestConfig):
         super().__init__(config)
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size)
         self.layers = nn.ModuleList([MiniMaxM2Block(config, i) for i in range(config.num_hidden_layers)])
@@ -194,7 +194,7 @@ class MiniMaxM2MTPModule(nn.Module):
     Multi-Token Prediction (MTP) Module (Section 2.3).
     Predicts the k-th future token during training/speculative decoding draft paths.
     """
-    def __init__(self, config: MiniMaxM2Config, depth_k: int):
+    def __init__(self, config: MiniMaxM2TestConfig, depth_k: int):
         super().__init__()
         self.depth_k = depth_k
         self.proj = nn.Linear(config.hidden_size * 2, config.hidden_size, bias=False)
@@ -214,7 +214,7 @@ class MiniMaxM2ForCausalLM(MiniMaxM2PreTrainedModel, GenerationMixin):
     """
     Causal Language Model with MiniMax-M2 backbone and Multi-Token Prediction (MTP) support.
     """
-    def __init__(self, config: MiniMaxM2Config):
+    def __init__(self, config: MiniMaxM2TestConfig):
         super().__init__(config)
         self.model = MiniMaxM2Model(config)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)

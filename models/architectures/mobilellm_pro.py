@@ -90,7 +90,7 @@ class MobileLLMProTestConfig(MobileLLMProConfig):
 
 class MobileLLMProBlock(nn.Module):
     """Individual MobileLLM-Pro Transformer Layer with RMSNorm, GQA/SWA, and SwiGLU FFN."""
-    def __init__(self, config: MobileLLMProConfig, layer_idx: int):
+    def __init__(self, config: MobileLLMProTestConfig, layer_idx: int):
         super().__init__()
         self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.self_attn = GroupedQueryAttention(config, layer_idx)
@@ -111,7 +111,7 @@ class MobileLLMProBlock(nn.Module):
 
 class MobileLLMProPreTrainedModel(PreTrainedModel):
     """Base PreTrainedModel class handling weight initialization for MobileLLM-Pro."""
-    config_class = MobileLLMProConfig
+    config_class = MobileLLMProTestConfig
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
 
@@ -132,7 +132,7 @@ class MobileLLMProPreTrainedModel(PreTrainedModel):
 
 class MobileLLMProModel(MobileLLMProPreTrainedModel):
     """MobileLLM-Pro Transformer Backbone."""
-    def __init__(self, config: MobileLLMProConfig):
+    def __init__(self, config: MobileLLMProTestConfig):
         super().__init__(config)
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size)
         self.layers = nn.ModuleList([MobileLLMProBlock(config, i) for i in range(config.num_hidden_layers)])
@@ -170,7 +170,7 @@ class MobileLLMProModel(MobileLLMProPreTrainedModel):
 
 class MobileLLMProForCausalLM(MobileLLMProPreTrainedModel, GenerationMixin):
     """MobileLLM-Pro Model with Causal Language Modeling Head for On-Device Deployment."""
-    def __init__(self, config: MobileLLMProConfig):
+    def __init__(self, config: MobileLLMProTestConfig):
         super().__init__(config)
         self.model = MobileLLMProModel(config)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)

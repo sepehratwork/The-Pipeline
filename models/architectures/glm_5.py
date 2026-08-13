@@ -147,7 +147,7 @@ class GLM5Block(nn.Module):
     
     Contains Multi-Latent Attention (MLA) and either a Dense SwiGLU MLP or a DeepSeekMoE block.
     """
-    def __init__(self, config: GLM5Config, layer_idx: int):
+    def __init__(self, config: GLM5TestConfig, layer_idx: int):
         super().__init__()
         self.layer_idx = layer_idx
         self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
@@ -179,7 +179,7 @@ class GLM5Block(nn.Module):
 
 class GLM5PreTrainedModel(PreTrainedModel):
     """An abstract class to handle weights initialization and standard Hugging Face interface."""
-    config_class = GLM5Config
+    config_class = GLM5TestConfig
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
 
@@ -199,7 +199,7 @@ class GLM5Model(GLM5PreTrainedModel):
     """
     The bare GLM-5 Model transformer outputting raw hidden-states without standard LM head.
     """
-    def __init__(self, config: GLM5Config):
+    def __init__(self, config: GLM5TestConfig):
         super().__init__(config)
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size)
         self.layers = nn.ModuleList([GLM5Block(config, i) for i in range(config.num_hidden_layers)])
@@ -248,7 +248,7 @@ class GLM5ForCausalLM(GLM5PreTrainedModel, GenerationMixin):
     """
     GLM-5 Model with a Causal Language Modeling Head on top.
     """
-    def __init__(self, config: GLM5Config):
+    def __init__(self, config: GLM5TestConfig):
         super().__init__(config)
         self.model = GLM5Model(config)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)

@@ -143,7 +143,7 @@ class DeepSeekV4Block(nn.Module):
     """
     Transformer Block for DeepSeek-V4 with mHC residual connections and Hybrid Attention/MoE.
     """
-    def __init__(self, config: DeepSeekV4Config, layer_idx: int):
+    def __init__(self, config: DeepSeekV4TestConfig, layer_idx: int):
         super().__init__()
         self.layer_idx = layer_idx
         self.n_hc = config.n_hc
@@ -186,7 +186,7 @@ class DeepSeekV4Block(nn.Module):
 
 
 class DeepSeekV4PreTrainedModel(PreTrainedModel):
-    config_class = DeepSeekV4Config
+    config_class = DeepSeekV4TestConfig
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
 
@@ -201,7 +201,7 @@ class DeepSeekV4PreTrainedModel(PreTrainedModel):
 
 
 class DeepSeekV4Model(DeepSeekV4PreTrainedModel):
-    def __init__(self, config: DeepSeekV4Config):
+    def __init__(self, config: DeepSeekV4TestConfig):
         super().__init__(config)
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size)
         self.layers = nn.ModuleList([DeepSeekV4Block(config, i) for i in range(config.num_hidden_layers)])
@@ -233,7 +233,7 @@ class DeepSeekV4ForCausalLM(DeepSeekV4PreTrainedModel, GenerationMixin):
     """
     DeepSeek-V4 Causal Language Model with Multi-Token Prediction (MTP) support.
     """
-    def __init__(self, config: DeepSeekV4Config):
+    def __init__(self, config: DeepSeekV4TestConfig):
         super().__init__(config)
         self.model = DeepSeekV4Model(config)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)

@@ -163,7 +163,7 @@ class KimiK3Block(nn.Module):
     Building block for Kimi K3, integrating Attention (KDA or Gated MLA),
     Feed-Forward Network (Stable LatentMoE or Dense SiTU-GLU), and RMSNorm.
     """
-    def __init__(self, config: KimiK3Config, layer_idx: int):
+    def __init__(self, config: KimiK3TestConfig, layer_idx: int):
         super().__init__()
         self.config = config
         self.layer_idx = layer_idx
@@ -201,7 +201,7 @@ class KimiK3Block(nn.Module):
 
 
 class KimiK3PreTrainedModel(PreTrainedModel):
-    config_class = KimiK3Config
+    config_class = KimiK3TestConfig
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
 
@@ -221,7 +221,7 @@ class KimiK3Model(KimiK3PreTrainedModel):
     """
     Kimi K3 Backbone Model with Block Attention Residuals (AttnRes) and Hybrid KDA-MLA Attention.
     """
-    def __init__(self, config: KimiK3Config):
+    def __init__(self, config: KimiK3TestConfig):
         super().__init__(config)
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size)
         self.layers = nn.ModuleList([KimiK3Block(config, i) for i in range(config.num_hidden_layers)])
@@ -277,7 +277,7 @@ class KimiK3ForCausalLM(KimiK3PreTrainedModel, GenerationMixin):
     """
     Kimi K3 Language Model for Causal LM tasks.
     """
-    def __init__(self, config: KimiK3Config):
+    def __init__(self, config: KimiK3TestConfig):
         super().__init__(config)
         self.model = KimiK3Model(config)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
