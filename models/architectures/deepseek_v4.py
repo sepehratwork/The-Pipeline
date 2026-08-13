@@ -76,15 +76,13 @@ class DeepSeekV4Config(PretrainedConfig):
 
 class DeepSeekV4TestConfig(DeepSeekV4Config):
     """
-    Test configuration for DeepSeek-V4 scaled to ~200M active parameters.
+    100M Parameter Test Configuration for DeepSeek-V4.
     """
-    model_type = "deepseek_v4_test"
-
     def __init__(
         self,
         vocab_size=100278,
-        hidden_size=768,
-        intermediate_size=2048,
+        hidden_size=512,
+        intermediate_size=1536,
         num_hidden_layers=12,
         num_attention_heads=8,
         num_key_value_heads=2,
@@ -94,8 +92,8 @@ class DeepSeekV4TestConfig(DeepSeekV4Config):
         t_max=20,
         compression_rate=4,
         heavy_compression_rate=128,
-        head_dim=128,
-        attention_topk=128,
+        head_dim=64,
+        attention_topk=64,
         q_lora_rank=256,
         indexer_heads=8,
         indexer_dim=32,

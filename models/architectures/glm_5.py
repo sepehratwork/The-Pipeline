@@ -80,19 +80,17 @@ class GLM5Config(PretrainedConfig):
 
 class GLM5TestConfig(GLM5Config):
     """
-    Test configuration for GLM-5 scaled to ~200M active parameters.
+    100M Active Parameter Test Configuration for GLM-5.
     """
-    architecture = "glm_5_test"
-
     def __init__(
         self,
         vocab_size: int = 154880,
-        hidden_size: int = 768,
-        intermediate_size: int = 2048,
-        moe_intermediate_size: int = 512,
+        hidden_size: int = 512,
+        intermediate_size: int = 1536,
+        moe_intermediate_size: int = 384,
         num_hidden_layers: int = 12,
         num_dense_layers: int = 2,
-        num_attention_heads: int = 12,
+        num_attention_heads: int = 8,
         qk_head_dim: int = 64,
         v_head_dim: int = 64,
         rope_head_dim: int = 32,

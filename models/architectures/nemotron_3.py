@@ -67,20 +67,18 @@ class Nemotron3Config(PretrainedConfig):
 
 class Nemotron3TestConfig(Nemotron3Config):
     """
-    Test configuration for Nemotron 3 scaled to ~200M active parameters.
+    100M Parameter Test Configuration for Nemotron 3.
     """
-    architecture = "nemotron_3_test"
-
     def __init__(
         self,
         vocab_size: int = 100278,
         hidden_size: int = 768,
-        intermediate_size: int = 2048,
+        intermediate_size: int = 1536,
         num_hidden_layers: int = 12,
-        num_attention_heads: int = 8,
+        num_attention_heads: int = 12,
         num_key_value_heads: int = 2,
         attn_layer_indices: Optional[List[int]] = None,
-        max_position_embeddings: int = 131072,
+        max_position_embeddings: int = 32768,
         is_moe: bool = True,
         latent_dim: int = 192,
         num_routed_experts: int = 16,

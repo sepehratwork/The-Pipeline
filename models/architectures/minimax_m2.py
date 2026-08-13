@@ -66,17 +66,15 @@ class MiniMaxM2Config(PretrainedConfig):
 
 class MiniMaxM2TestConfig(MiniMaxM2Config):
     """
-    Test configuration for MiniMax-M2 scaled to ~200M active parameters.
+    100M Active Parameter Test Configuration for MiniMax-M2.
     """
-    architecture = "minimax_m2_test"
-
     def __init__(
         self,
         vocab_size=100278,
         hidden_size=768,
         intermediate_size=256,
         num_hidden_layers=12,
-        num_attention_heads=8,
+        num_attention_heads=12,
         num_key_value_heads=2,
         num_experts=32,
         num_experts_per_tok=4,

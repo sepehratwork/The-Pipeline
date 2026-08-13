@@ -54,18 +54,16 @@ class MobileLLMProConfig(PretrainedConfig):
 
 class MobileLLMProTestConfig(MobileLLMProConfig):
     """
-    Test configuration for MobileLLM-Pro scaled to ~200M parameters.
+    100M Parameter Test Configuration for MobileLLM-Pro.
+    Reflects the deep & narrow architectural priority for sub-2B models.
     """
-    architecture = "mobilellm_pro_test"
-    model_type = "mobilellm_pro_test"
-
     def __init__(
         self,
         vocab_size=202048,
-        hidden_size=640,
-        intermediate_size=3072,
+        hidden_size=512,
+        intermediate_size=2048,
         num_hidden_layers=16,
-        num_attention_heads=10,
+        num_attention_heads=8,
         num_key_value_heads=2,
         max_position_embeddings=32768,
         sliding_window=512,

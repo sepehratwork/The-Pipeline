@@ -109,25 +109,23 @@ class KimiK3Config(PretrainedConfig):
 
 class KimiK3TestConfig(KimiK3Config):
     """
-    Test configuration for Kimi K3 scaled to ~200M active parameters.
+    100M Active Parameter Test Configuration for Kimi K3.
     """
-    architecture = "kimi_k3_test"
-
     def __init__(
         self,
         vocab_size: int = 160000,
-        hidden_size: int = 768,
+        hidden_size: int = 512,
         num_hidden_layers: int = 12,
         num_attention_heads: int = 8,
-        head_dim: int = 96,
+        head_dim: int = 64,
         kda_ratio: int = 3,
-        latent_dim: int = 384,
+        latent_dim: int = 256,
         num_routed_experts: int = 32,
         num_active_experts: int = 4,
         num_shared_experts: int = 1,
-        moe_intermediate_size: int = 512,
-        shared_intermediate_size: int = 1024,
-        dense_intermediate_size: int = 2048,
+        moe_intermediate_size: int = 384,
+        shared_intermediate_size: int = 768,
+        dense_intermediate_size: int = 1536,
         use_moe: bool = True,
         attn_res_num_blocks: int = 4,
         max_position_embeddings: int = 128000,

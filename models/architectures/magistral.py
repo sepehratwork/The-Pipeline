@@ -67,20 +67,18 @@ class MagistralConfig(PretrainedConfig):
 
 class MagistralTestConfig(MagistralConfig):
     """
-    Test configuration for Magistral scaled to ~200M parameters.
+    100M Parameter Test Configuration for Magistral.
     """
-    architecture = "magistral_test"
-
     def __init__(
         self,
         vocab_size: int = 32768,
-        hidden_size: int = 896,
-        intermediate_size: int = 2432,
-        num_hidden_layers: int = 16,
-        num_attention_heads: int = 14,
-        num_key_value_heads: int = 2,
+        hidden_size: int = 768,
+        intermediate_size: int = 2048,
+        num_hidden_layers: int = 12,
+        num_attention_heads: int = 12,
+        num_key_value_heads: int = 3,
         head_dim: int = 64,
-        max_position_embeddings: int = 16384,
+        max_position_embeddings: int = 8192,
         sliding_window: int = 2048,
         rope_theta: float = 1000000.0,
         rms_norm_eps: float = 1e-6,
