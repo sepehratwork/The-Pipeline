@@ -94,29 +94,48 @@ class GroupedQueryAttention(nn.Module):
             k = k.repeat_interleave(self.num_key_value_groups, dim=1)
             v = v.repeat_interleave(self.num_key_value_groups, dim=1)
 
-        # Construct Causal Sliding Window Attention Mask if enabled for local attention layers
-        attn_mask = attention_mask
-        if self.sliding_window is not None:
-            device = hidden_states.device
+        # ---------------------------------------------------------
+        # Robust Attention Mask Construction for PyTorch SDPA
+        # ---------------------------------------------------------
+        device = hidden_states.device
+        has_padding = False
+        padding_mask = None
+
+        if attention_mask is not None:
+            if attention_mask.dtype == torch.bool:
+                padding_mask = attention_mask
+                has_padding = not padding_mask.all()
+            else:
+                # Convert int/long mask from HuggingFace Trainer (1=keep, 0=pad) to bool
+                padding_mask = (attention_mask != 0)
+                has_padding = not padding_mask.all()
+
+        # Check if fast PyTorch SDPA kernel (is_causal=True, attn_mask=None) can be used
+        if self.sliding_window is None and not has_padding and q_len == kv_seq_len:
+            attn_output = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        elif self.sliding_window is None and not has_padding and q_len == 1:
+            attn_output = F.scaled_dot_product_attention(q, k, v, is_causal=False)
+        else:
             q_idx = torch.arange(kv_seq_len - q_len, kv_seq_len, device=device).unsqueeze(1)
             k_idx = torch.arange(kv_seq_len, device=device).unsqueeze(0)
-            
-            # Distance constraint: 0 <= q_idx - k_idx < sliding_window
-            distance = q_idx - k_idx
-            swa_mask = (distance >= 0) & (distance < self.sliding_window)
 
-            if attn_mask is not None:
-                if attn_mask.dtype == torch.bool:
-                    attn_mask = attn_mask & swa_mask.unsqueeze(0).unsqueeze(0)
-                else:
-                    attn_mask = attn_mask.masked_fill(~swa_mask.unsqueeze(0).unsqueeze(0), float('-inf'))
-            else:
-                attn_mask = swa_mask.unsqueeze(0).unsqueeze(0)
+            # Construct 2D Causal Mask Matrix: q_idx >= k_idx
+            attn_mask = q_idx >= k_idx
 
-        if attn_mask is not None:
-            attn_output = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
-        else:
-            attn_output = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+            # Apply Sliding Window Attention (SWA) constraint if enabled
+            if self.sliding_window is not None:
+                attn_mask = attn_mask & ((q_idx - k_idx) < self.sliding_window)
+
+            attn_mask = attn_mask.unsqueeze(0).unsqueeze(0)  # Shape: (1, 1, q_len, kv_seq_len)
+
+            if padding_mask is not None:
+                if padding_mask.dim() == 2:
+                    padding_mask = padding_mask.unsqueeze(1).unsqueeze(2)  # Shape: (bsz, 1, 1, kv_seq_len)
+                elif padding_mask.dim() == 3:
+                    padding_mask = padding_mask.unsqueeze(1)               # Shape: (bsz, 1, q_len, kv_seq_len)
+                attn_mask = attn_mask & padding_mask
+
+            attn_output = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, is_causal=False)
 
         attn_output = attn_output.transpose(1, 2).contiguous().view(bsz, q_len, self.hidden_size)
         return self.o_proj(attn_output), past_key_value
@@ -212,7 +231,35 @@ class MultiLatentAttention(nn.Module):
             v = torch.cat([past_key_value[1], v], dim=2)
         past_key_value = (k, v)
 
-        attn_output = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        kv_seq_len = k.shape[-2]
+        device = hidden_states.device
+        has_padding = False
+        padding_mask = None
+
+        if attention_mask is not None:
+            if attention_mask.dtype == torch.bool:
+                padding_mask = attention_mask
+                has_padding = not padding_mask.all()
+            else:
+                padding_mask = (attention_mask != 0)
+                has_padding = not padding_mask.all()
+
+        if not has_padding and q_len == kv_seq_len:
+            attn_output = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        elif not has_padding and q_len == 1:
+            attn_output = F.scaled_dot_product_attention(q, k, v, is_causal=False)
+        else:
+            q_idx = torch.arange(kv_seq_len - q_len, kv_seq_len, device=device).unsqueeze(1)
+            k_idx = torch.arange(kv_seq_len, device=device).unsqueeze(0)
+            attn_mask = (q_idx >= k_idx).unsqueeze(0).unsqueeze(0)
+            if padding_mask is not None:
+                if padding_mask.dim() == 2:
+                    padding_mask = padding_mask.unsqueeze(1).unsqueeze(2)
+                elif padding_mask.dim() == 3:
+                    padding_mask = padding_mask.unsqueeze(1)
+                attn_mask = attn_mask & padding_mask
+            attn_output = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, is_causal=False)
+
         attn_output = attn_output.transpose(1, 2).contiguous().view(bsz, q_len, self.num_heads * self.v_head_dim)
 
         if self.use_gated:
@@ -472,10 +519,34 @@ class NoRopeGroupedQueryAttention(nn.Module):
             k = k.repeat_interleave(self.num_key_value_groups, dim=1)
             v = v.repeat_interleave(self.num_key_value_groups, dim=1)
 
+        kv_seq_len = k.shape[-2]
+        device = hidden_states.device
+        has_padding = False
+        padding_mask = None
+
         if attention_mask is not None:
-            attn_output = F.scaled_dot_product_attention(q, k, v, attn_mask=attention_mask)
-        else:
+            if attention_mask.dtype == torch.bool:
+                padding_mask = attention_mask
+                has_padding = not padding_mask.all()
+            else:
+                padding_mask = (attention_mask != 0)
+                has_padding = not padding_mask.all()
+
+        if not has_padding and q_len == kv_seq_len:
             attn_output = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        elif not has_padding and q_len == 1:
+            attn_output = F.scaled_dot_product_attention(q, k, v, is_causal=False)
+        else:
+            q_idx = torch.arange(kv_seq_len - q_len, kv_seq_len, device=device).unsqueeze(1)
+            k_idx = torch.arange(kv_seq_len, device=device).unsqueeze(0)
+            attn_mask = (q_idx >= k_idx).unsqueeze(0).unsqueeze(0)
+            if padding_mask is not None:
+                if padding_mask.dim() == 2:
+                    padding_mask = padding_mask.unsqueeze(1).unsqueeze(2)
+                elif padding_mask.dim() == 3:
+                    padding_mask = padding_mask.unsqueeze(1)
+                attn_mask = attn_mask & padding_mask
+            attn_output = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, is_causal=False)
 
         attn_output = attn_output.transpose(1, 2).contiguous().view(bsz, q_len, self.hidden_size)
         return self.o_proj(attn_output), past_key_value
