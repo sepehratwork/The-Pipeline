@@ -16,7 +16,7 @@ from utils.callbacks import StageTimer
 
 
 def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_username=None):
-    print("=== Starting Stage 6: RLVR with ALL Algorithms ===")
+    print(f"=== Starting Stage 6: RLVR with ALL Algorithms for {architecture} ===")
     stage6_dir = os.path.join(base_dir, "Stage6")
     os.makedirs(stage6_dir, exist_ok=True)
 

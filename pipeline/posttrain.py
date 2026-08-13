@@ -44,7 +44,7 @@ def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path, hf_user
     )
 
     if not is_already_saved:
-        print("=== Starting Stage 4: Supervised Finetuning (SFT) ===")
+        print(f"=== Starting Stage 4: Supervised Finetuning (SFT) for {architecture} ===")
         os.makedirs(stage4_dir, exist_ok=True)
 
         ConfigClass, ModelClass = get_model_classes(architecture)
@@ -140,7 +140,7 @@ def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path, hf_user
     )
 
     if not is_already_saved:
-        print("=== Starting Stage 5: Direct Preference Optimization (DPO) ===")
+        print(f"=== Starting Stage 5: Direct Preference Optimization (DPO) for {architecture} ===")
         os.makedirs(stage5_dir, exist_ok=True)
 
         ConfigClass, ModelClass = get_model_classes(architecture)

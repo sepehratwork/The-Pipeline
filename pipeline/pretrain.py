@@ -20,7 +20,7 @@ def _run_pretrain_stage(stage_name, architecture, tokenizer, dataset_path, seq_l
     )
 
     if not is_already_saved:
-        print(f"=== Starting {stage_name} ===")
+        print(f"=== Starting {stage_name} for {architecture} ===")
         os.makedirs(output_dir, exist_ok=True)
         
         ConfigClass, ModelClass = get_model_classes(architecture)
