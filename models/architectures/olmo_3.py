@@ -143,7 +143,13 @@ class OLMo3ForCausalLM(OLMo3PreTrainedModel, GenerationMixin):
             shift_logits = logits[..., :-1, :].contiguous().float()
             shift_labels = labels[..., 1:].contiguous()
             ce_loss = nn.CrossEntropyLoss()(shift_logits.view(-1, self.config.vocab_size), shift_labels.view(-1))
-            z_loss = (torch.logsumexp(shift_logits, dim=-1) ** 2).mean()
+            
+            valid_mask = (shift_labels != -100)
+            if valid_mask.any():
+                z_loss = ((torch.logsumexp(shift_logits, dim=-1) ** 2) * valid_mask).sum() / valid_mask.sum().clamp(min=1)
+            else:
+                z_loss = (torch.logsumexp(shift_logits, dim=-1) ** 2).mean()
+
             loss = ce_loss + self.config.z_loss_weight * z_loss
 
         return CausalLMOutputWithPast(loss=loss, logits=logits, past_key_values=past_kv)
