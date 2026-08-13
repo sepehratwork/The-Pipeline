@@ -137,7 +137,7 @@ def prepare_dpo_dataset(dataset_name):
 
     ds = load_dataset(f"/content/drive/MyDrive/Simulated/{dataset_name}", split="train")
     num_proc = os.cpu_count() or 1
-    formatted_ds = ds.map(format_dpo_dataset, batched=True, num_proc=num_proc, desc="Formatting DPO dataset")
+    formatted_ds = ds.map(format_dpo_dataset, num_proc=num_proc, desc="Formatting DPO dataset")
     
     save_cache(formatted_ds, processed_path, current_config)
     return formatted_ds
