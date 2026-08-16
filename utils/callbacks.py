@@ -53,7 +53,7 @@ class StageTimer:
         if not times:
             return
         print("\n" + "┌" + "─" * 68 + "┐")
-        print("│" + " 📊 CUMULATIVE TRAINING TIME BREAKDOWN (ALL PHASES)".center(68) + "│")
+        print("│" + " 📊 CUMULATIVE TRAINING TIME BREAKDOWN (ALL PHASES)".center(67) + "│")
         print("├" + "─" * 45 + "┬" + "─" * 22 + "┤")
         print(f"│ {'Stage Name':<43} │ {'Duration':<20} │")
         print("├" + "─" * 45 + "┼" + "─" * 22 + "┤")
@@ -71,7 +71,7 @@ class StageTimer:
         tot_seconds = total_time % 60
         tot_str = f"{tot_hours:02d}h {tot_minutes:02d}m {tot_seconds:05.2f}s"
         print("├" + "─" * 45 + "┴" + "─" * 22 + "┤")
-        print(f"│ {'🌟 TOTAL ELAPSED TIME':<43}   {tot_str:<20} │")
+        print(f"│ {'🌟 TOTAL ELAPSED TIME':<42}   {tot_str:<20} │")
         print("└" + "─" * 68 + "┘\n")
 
 
