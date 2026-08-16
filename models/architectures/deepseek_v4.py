@@ -81,7 +81,7 @@ class DeepSeekV4Config(PretrainedConfig):
         super().__init__(tie_word_embeddings=tie_word_embeddings, **kwargs)
 
 
-class DeepSeekV4TestConfig(DeepSeekV4Config):
+class DeepSeekV4TestConfig(PretrainedConfig):
     """
     100M Parameter Test Configuration for DeepSeek-V4.
     """
