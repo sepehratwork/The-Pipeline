@@ -52,27 +52,27 @@ class StageTimer:
         times = self._load_times()
         if not times:
             return
-        print("\n" + "┌" + "─" * 68 + "┐")
+        print("\n" + "┌" + "─" * 73 + "┐")
         print("│" + " 📊 CUMULATIVE TRAINING TIME BREAKDOWN (ALL PHASES)".center(67) + "│")
-        print("├" + "─" * 45 + "┬" + "─" * 22 + "┤")
-        print(f"│ {'Stage Name':<43} │ {'Duration':<20} │")
-        print("├" + "─" * 45 + "┼" + "─" * 22 + "┤")
+        print("├" + "─" * 50 + "┬" + "─" * 22 + "┤")
+        print(f"│ {'Stage Name':<48} │ {'Duration':<20} │")
+        print("├" + "─" * 50 + "┼" + "─" * 22 + "┤")
         total_time = 0.0
         for stage, duration in times.items():
             hours = int(duration // 3600)
             minutes = int((duration % 3600) // 60)
             seconds = duration % 60
             dur_str = f"{hours:02d}h {minutes:02d}m {seconds:05.2f}s"
-            print(f"│ {stage[:43]:<43} │ {dur_str:<20} │")
+            print(f"│ {stage[:48]:<48} │ {dur_str:<20} │")
             total_time += duration
 
         tot_hours = int(total_time // 3600)
         tot_minutes = int((total_time % 3600) // 60)
         tot_seconds = total_time % 60
         tot_str = f"{tot_hours:02d}h {tot_minutes:02d}m {tot_seconds:05.2f}s"
-        print("├" + "─" * 45 + "┴" + "─" * 22 + "┤")
-        print(f"│ {'🌟 TOTAL ELAPSED TIME':<42}   {tot_str:<20} │")
-        print("└" + "─" * 68 + "┘\n")
+        print("├" + "─" * 50 + "┴" + "─" * 22 + "┤")
+        print(f"│ {'🌟 TOTAL ELAPSED TIME':<47}   {tot_str:<20} │")
+        print("└" + "─" * 73 + "┘\n")
 
 
 class GradientMetricsCallback(TrainerCallback):
