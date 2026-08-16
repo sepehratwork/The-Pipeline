@@ -86,42 +86,43 @@ class DeepSeekV4Config(PretrainedConfig):
 
 class DeepSeekV4TestConfig(PretrainedConfig):
     """
-    100M Parameter Test Configuration for DeepSeek-V4.
-    Calibrated based on DeepSeek-V4 architecture specifications and optimal scaling laws.
+    100M Parameter Configuration for DeepSeek-V4.
+    Calibrated strictly according to DeepSeek-V4 architectural specifications
+    and scaling law constraints.
     """
     architecture = "deepseek_v4_test"
 
     def __init__(
         self,
-        vocab_size: int = 32000,                  # Scaled to prevent embedding parameter domination (~16.4M)
-        hidden_size: int = 512,                   # Backbone hidden dimension d
-        intermediate_size: int = 448,             # Fine-grained intermediate dimension per MoE expert (d_ff)
-        num_hidden_layers: int = 12,              # Depth chosen to balance width/depth scaling (R_{D/W})
-        num_attention_heads: int = 8,             # n_h = 8 (8 * 64 = 512)
-        num_key_value_heads: int = 2,             # Retained for standard interface compatibility
+        vocab_size: int = 32000,                  # Scaled down to prevent embedding parameter starvation (16.38M)
+        hidden_size: int = 512,                   # Hidden dimension d = 512
+        intermediate_size: int = 448,             # Fine-grained intermediate dim per expert d_ff = 448
+        num_hidden_layers: int = 12,              # Depth L = 12 (balances R_{D/W} and inference latency)
+        num_attention_heads: int = 8,             # n_h = 8 (head_dim * n_h = 64 * 8 = 512 = d)
+        num_key_value_heads: int = 2,
         max_position_embeddings: int = 8192,
         rope_theta: float = 500000.0,
-        n_hc: int = 4,                            # mHC expansion factor (as in DeepSeek-V4)
-        t_max: int = 20,                          # Sinkhorn-Knopp iterations (as in DeepSeek-V4)
+        n_hc: int = 4,                            # mHC stream expansion factor n_hc = 4
+        t_max: int = 20,                          # Sinkhorn-Knopp iterations t_max = 20
         compression_rate: int = 4,                # CSA compression rate m = 4
         heavy_compression_rate: int = 128,        # HCA compression rate m' = 128
         head_dim: int = 64,                       # Head dimension c = 64
-        attention_topk: int = 32,                 # Scaled top-k for compressed blocks
-        q_lora_rank: int = 256,                   # Query compression rank d_c = d / 2
-        indexer_heads: int = 4,                   # n_h^I = 4
-        indexer_dim: int = 32,                    # c^I = 32
+        attention_topk: int = 32,                 # Sparse attention top-k for compressed tokens
+        q_lora_rank: int = 256,                   # Query compression rank d_c = d / 2 = 256
+        indexer_heads: int = 4,                   # Indexer query heads n_h^I = 4
+        indexer_dim: int = 32,                    # Indexer head dim c^I = 32
         num_projection_groups: int = 2,           # g = 2 groups for grouped output projection
         group_intermediate_dim: int = 128,        # d_g = 128 (satisfies d_g < c * n_h / g = 256)
-        window_size: int = 128,                   # n_win = 128 sliding window tokens
-        num_routed_experts: int = 8,              # Fine-grained routed experts
-        num_active_experts: int = 2,              # Top-2 routing (activation ratio ~ 25%)
-        num_shared_experts: int = 1,              # 1 shared expert always activated
-        hash_routing_layers: int = 2,             # Hash routing for the first 2 layers
+        window_size: int = 128,                   # Sliding window attention size n_win = 128
+        num_routed_experts: int = 8,              # Fine-grained routed experts N_routed = 8
+        num_active_experts: int = 2,              # Top-2 activated routed experts
+        num_shared_experts: int = 1,              # 1 shared expert (DeepSeekMoE standard)
+        hash_routing_layers: int = 2,             # Hash routing for the initial 2 layers
         z_loss_weight: float = 1e-5,
-        mtp_loss_weight: float = 0.3,             # As specified in DeepSeek-V4 pre-training
+        mtp_loss_weight: float = 0.3,             # MTP loss weight as in DeepSeek-V4 pre-training
         use_yarn: bool = False,
         original_max_position_embeddings: int = 8192,
-        tie_word_embeddings: bool = True,         # Tied embeddings for parameter efficiency
+        tie_word_embeddings: bool = True,         # Tied word embeddings
         **kwargs
     ):
         super().__init__(
