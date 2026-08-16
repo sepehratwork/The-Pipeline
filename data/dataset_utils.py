@@ -1,6 +1,7 @@
 import os
 import json
 import pandas as pd
+from tqdm import tqdm
 from datasets import Dataset, concatenate_datasets, load_dataset, load_from_disk
 
 
@@ -12,21 +13,26 @@ def check_and_load_cache(processed_path, current_config):
             with open(config_path, "r") as f:
                 saved_config = json.load(f)
             if saved_config == current_config:
-                print(f"Loading processed dataset from {processed_path}")
-                return load_from_disk(processed_path)
+                print(f"📦 [Cache Hit] Loading processed dataset from: {processed_path}")
+                ds = load_from_disk(processed_path)
+                print(f"✓ Dataset loaded successfully ({len(ds):,} samples).")
+                return ds
             else:
-                print("Configuration changed. Reprocessing dataset...")
+                print("🔄 [Cache Miss] Dataset configuration changed. Reprocessing dataset...")
         except Exception as e:
-            print(f"Failed to load cached dataset: {e}. Reprocessing...")
+            print(f"⚠️ Failed to load cached dataset ({e}). Reprocessing from scratch...")
+    else:
+        print(f"ℹ️  [Cache Miss] No existing cache found at: {processed_path}. Processing new dataset...")
     return None
 
 
 def save_cache(dataset, processed_path, current_config):
     """Saves the processed dataset and its configuration to disk."""
-    print(f"Saving processed dataset to {processed_path}")
+    print(f"💾 Saving processed dataset ({len(dataset):,} samples) to: {processed_path}...")
     dataset.save_to_disk(processed_path)
     with open(os.path.join(processed_path, "config.json"), "w") as f:
-        json.dump(current_config, f)
+        json.dump(current_config, f, indent=2)
+    print(f"✓ Successfully cached dataset to {processed_path}.")
 
 
 def format_dpo_dataset(example):
@@ -56,14 +62,20 @@ def prepare_pretrain_dataset(phase_path, tokenizer, seq_len):
     data_dir = f"/content/drive/MyDrive/Simulated/{phase_path}/data"
 
     if os.path.exists(data_dir):
-        for shard in os.listdir(data_dir):
+        shards = [s for s in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, s))]
+        print(f"📂 Found {len(shards)} data shards in {data_dir}. Reading compressed JSON lines...")
+        for shard in tqdm(shards, desc="📁 Reading Shards", unit="shard"):
             shard_path = f"{data_dir}/{shard}"
-            if os.path.isdir(shard_path):
-                for j in os.listdir(shard_path):
-                    df = pd.read_json(f"{shard_path}/{j}", lines=True, compression='zstd')
-                    df = df.drop(columns=[col for col in df.columns if col != "text"])
-                    dss.append(Dataset.from_pandas(df))
+            files = os.listdir(shard_path)
+            for j in tqdm(files, desc=f"  └ Shard {shard}", leave=False, unit="file"):
+                file_path = f"{shard_path}/{j}"
+                df = pd.read_json(file_path, lines=True, compression='zstd')
+                df = df.drop(columns=[col for col in df.columns if col != "text"])
+                dss.append(Dataset.from_pandas(df))
+        
+        print("🔗 Concatenating dataset shards...")
         ds = concatenate_datasets(dss)
+        print(f"✓ Total raw pre-training samples loaded: {len(ds):,}")
     else:
         raise FileNotFoundError(f"Data directory {data_dir} not found.")
 
@@ -71,6 +83,7 @@ def prepare_pretrain_dataset(phase_path, tokenizer, seq_len):
         return tokenizer(examples["text"], truncation=True, max_length=seq_len, padding="max_length")
 
     num_proc = os.cpu_count() or 1
+    print(f"⚙️  Tokenizing dataset (seq_len={seq_len}, workers={num_proc})...")
     tokenized_ds = ds.map(tokenize_function, batched=True, remove_columns=["text"], num_proc=num_proc, desc="Tokenizing pretrain dataset")
     tokenized_ds = tokenized_ds.map(lambda e: {"labels": e["input_ids"].copy()}, batched=True, num_proc=num_proc, desc="Adding labels")
     tokenized_ds.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
@@ -90,7 +103,10 @@ def prepare_sft_dataset(dataset_name, tokenizer, seq_len):
     if cached_ds is not None:
         return cached_ds
 
-    ds = load_dataset(f"/content/drive/MyDrive/Simulated/{dataset_name}", split="train")
+    dataset_source = f"/content/drive/MyDrive/Simulated/{dataset_name}"
+    print(f"📂 Loading SFT dataset from: {dataset_source}...")
+    ds = load_dataset(dataset_source, split="train")
+    print(f"✓ Loaded {len(ds):,} raw SFT examples.")
 
     def tokenize_function(examples):
         texts = []
@@ -120,6 +136,7 @@ def prepare_sft_dataset(dataset_name, tokenizer, seq_len):
         return tokenized
 
     num_proc = os.cpu_count() or 1
+    print(f"⚙️  Tokenizing SFT conversations (seq_len={seq_len}, workers={num_proc})...")
     tokenized_ds = ds.map(tokenize_function, batched=True, num_proc=num_proc, desc="Tokenizing SFT dataset")
     tokenized_ds.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
     
@@ -135,8 +152,13 @@ def prepare_dpo_dataset(dataset_name):
     if cached_ds is not None:
         return cached_ds
 
-    ds = load_dataset(f"/content/drive/MyDrive/Simulated/{dataset_name}", split="train")
+    dataset_source = f"/content/drive/MyDrive/Simulated/{dataset_name}"
+    print(f"📂 Loading DPO dataset from: {dataset_source}...")
+    ds = load_dataset(dataset_source, split="train")
+    print(f"✓ Loaded {len(ds):,} raw preference pairs.")
+
     num_proc = os.cpu_count() or 1
+    print(f"⚙️  Formatting preference pairs into prompt/chosen/rejected triplets (workers={num_proc})...")
     formatted_ds = ds.map(format_dpo_dataset, num_proc=num_proc, desc="Formatting DPO dataset")
     
     save_cache(formatted_ds, processed_path, current_config)
@@ -154,7 +176,10 @@ def prepare_rlvr_dataset(dataset_name, tokenizer):
     if cached_ds is not None:
         return cached_ds
 
-    ds = load_dataset(f"/content/drive/MyDrive/Simulated/{dataset_name}", split="train")
+    dataset_source = f"/content/drive/MyDrive/Simulated/{dataset_name}"
+    print(f"📂 Loading RLVR reasoning dataset from: {dataset_source}...")
+    ds = load_dataset(dataset_source, split="train")
+    print(f"✓ Loaded {len(ds):,} raw RLVR reasoning examples.")
 
     def extract_fields(example):
         if "prompt" in example: prompt_text = example["prompt"]
@@ -172,6 +197,7 @@ def prepare_rlvr_dataset(dataset_name, tokenizer):
         return {"prompt_text": prompt_text, "ground_truth": ground_truth}
 
     num_proc = os.cpu_count() or 1
+    print(f"⚙️  Extracting prompt and ground truth reasoning targets (workers={num_proc})...")
     processed_ds = ds.map(extract_fields, num_proc=num_proc, desc="Preparing RLVR dataset")
     
     save_cache(processed_ds, processed_path, current_config)

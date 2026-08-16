@@ -31,7 +31,7 @@ def save_to_hf_hub(model_path, repo_name, hf_username=None):
     #     print(f"Model '{repo_id}' already exists on Hugging Face Hub. Skipping upload.")
     #     return
 
-    print(f"Uploading model from '{model_path}' to Hugging Face Hub as '{repo_id}'...")
+    print(f"📤 Uploading folder '{model_path}' to Hugging Face Hub repo '{repo_id}'...")
     try:
         api.create_repo(repo_id=repo_id, repo_type="model", exist_ok=True)
         api.upload_folder(
@@ -39,9 +39,9 @@ def save_to_hf_hub(model_path, repo_name, hf_username=None):
             repo_id=repo_id,
             repo_type="model"
         )
-        print(f"Successfully uploaded '{repo_id}' to Hugging Face Hub.")
+        print(f"✓ Successfully published '{repo_id}' on Hugging Face Hub!")
     except Exception as e:
-        print(f"Failed to upload model to Hugging Face Hub: {e}")
+        print(f"❌ Failed to upload model to Hugging Face Hub: {e}")
 
 
 def get_latest_checkpoint(output_dir):
@@ -49,7 +49,9 @@ def get_latest_checkpoint(output_dir):
         checkpoints = [d for d in os.listdir(output_dir) if d.startswith("checkpoint-")]
         if len(checkpoints) > 0:
             checkpoints.sort(key=lambda x: int(x.split("-")[1]))
-            return os.path.join(output_dir, checkpoints[-1])
+            latest = os.path.join(output_dir, checkpoints[-1])
+            print(f"🔍 Located latest checkpoint: {latest}")
+            return latest
     return None
 
 
@@ -62,6 +64,7 @@ def get_resume_state(log_file):
                     data = json.loads(line)
                     last_step = data.get('step', last_step)
             f.close()
+    print(f"ℹ️  Resume state loaded: last recorded step = {last_step}")
     return last_step
 
 
@@ -73,14 +76,18 @@ def cleanup_checkpoints(output_dir, keep=2):
             checkpoints.sort(key=lambda x: int(x.split("-")[1]))
             # Remove all but the last `keep` checkpoints
             for ckpt in checkpoints[:-keep]:
-                shutil.rmtree(os.path.join(output_dir, ckpt), ignore_errors=True)
+                target = os.path.join(output_dir, ckpt)
+                shutil.rmtree(target, ignore_errors=True)
+                print(f"🧹 Pruned older checkpoint: {ckpt}")
 
 
 def clear_all_checkpoints(output_dir):
     """Remove all checkpoints after the phase is completely finished."""
     if os.path.exists(output_dir):
         checkpoints = [d for d in os.listdir(output_dir) if d.startswith("checkpoint-")]
-        print(f"Checkpoints: {checkpoints}")
-        for ckpt in checkpoints:
-            shutil.rmtree(os.path.join(output_dir, ckpt), ignore_errors=True)
-            print(f"{ckpt} removed")
+        if checkpoints:
+            print(f"🧹 Cleaning up {len(checkpoints)} intermediate checkpoint(s) in {output_dir}...")
+            for ckpt in checkpoints:
+                shutil.rmtree(os.path.join(output_dir, ckpt), ignore_errors=True)
+                print(f"  └ Removed: {ckpt}")
+            print("✓ Checkpoint directory cleanup complete.")

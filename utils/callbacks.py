@@ -33,7 +33,7 @@ class StageTimer:
             print(f"⚠️ [TIMER] Error saving stage times: {e}")
 
     def start_stage(self, stage_name):
-        print(f"\n⏱️ [TIMER] Starting timing for: {stage_name}...")
+        print(f"\n⏱️  [TIMER] >>> Initiating execution timer for: {stage_name}")
         return time.time()
 
     def end_stage(self, stage_name, start_time):
@@ -45,30 +45,34 @@ class StageTimer:
         hours = int(elapsed // 3600)
         minutes = int((elapsed % 3600) // 60)
         seconds = elapsed % 60
-        print(f"⏱️ [TIMER] Completed {stage_name} in {hours}h {minutes}m {seconds:.2f}s (Elapsed: {elapsed:.2f}s).")
+        print(f"⏱️  [TIMER] <<< Completed {stage_name} in {hours:02d}h {minutes:02d}m {seconds:05.2f}s (Current run: {elapsed:.2f}s).")
         self.print_summary()
 
     def print_summary(self):
         times = self._load_times()
         if not times:
             return
-        print("\n" + "=" * 60)
-        print("📊 CUMULATIVE TRAINING TIME SUMMARY (All Stages)")
-        print("=" * 60)
+        print("\n" + "┌" + "─" * 68 + "┐")
+        print("│" + " 📊 CUMULATIVE TRAINING TIME BREAKDOWN (ALL PHASES)".center(68) + "│")
+        print("├" + "─" * 45 + "┬" + "─" * 22 + "┤")
+        print(f"│ {'Stage Name':<43} │ {'Duration':<20} │")
+        print("├" + "─" * 45 + "┼" + "─" * 22 + "┤")
         total_time = 0.0
         for stage, duration in times.items():
             hours = int(duration // 3600)
             minutes = int((duration % 3600) // 60)
             seconds = duration % 60
-            print(f" - {stage:35}: {hours:02d}h {minutes:02d}m {seconds:05.2f}s (Total: {duration:.2f}s)")
+            dur_str = f"{hours:02d}h {minutes:02d}m {seconds:05.2f}s"
+            print(f"│ {stage[:43]:<43} │ {dur_str:<20} │")
             total_time += duration
 
         tot_hours = int(total_time // 3600)
         tot_minutes = int((total_time % 3600) // 60)
         tot_seconds = total_time % 60
-        print("-" * 60)
-        print(f" 🌟 TOTAL ELAPSED TIME FOR ALL STAGES: {tot_hours:02d}h {tot_minutes:02d}m {tot_seconds:05.2f}s ({total_time:.2f}s)")
-        print("=" * 60 + "\n")
+        tot_str = f"{tot_hours:02d}h {tot_minutes:02d}m {tot_seconds:05.2f}s"
+        print("├" + "─" * 45 + "┴" + "─" * 22 + "┤")
+        print(f"│ {'🌟 TOTAL ELAPSED TIME':<43}   {tot_str:<20} │")
+        print("└" + "─" * 68 + "┘\n")
 
 
 class GradientMetricsCallback(TrainerCallback):
@@ -205,6 +209,11 @@ class GradientMetricsCallback(TrainerCallback):
             for param_group in self.optimizer.param_groups:
                 lr = param_group.get('lr', 0.0)
                 break
+
+        print(
+            f"  📈 [Step {step:03d}] Loss: {loss:.5f} | Grad Var: {var:.4e} | Grad Ent: {entropy:.4f} | "
+            f"LR: {lr:.2e} | VRAM: {vram_allocated:.2f}GB (Alloc) / {vram_reserved:.2f}GB (Res)"
+        )
 
         self.steps.append(step)
         self.variances.append(var)

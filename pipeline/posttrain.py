@@ -44,10 +44,19 @@ def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path, hf_user
     )
 
     if not is_already_saved:
-        print(f"=== Starting Stage 4: Supervised Finetuning (SFT) for {architecture} ===")
+        width = 75
+        print("\n" + "=" * width)
+        print(f"🎯 STAGE 4: SUPERVISED FINETUNING (SFT) :: {architecture.upper()}".center(width))
+        print("=" * width)
+        print(f" • Input Base Model   : {stage3_model_path}")
+        print(f" • Output Directory   : {stage4_dir}")
+        print(f" • Dataset Identifier : Dolci-Think-SFT-32B")
+        print("=" * width + "\n")
+        
         os.makedirs(stage4_dir, exist_ok=True)
 
         ConfigClass, ModelClass = get_model_classes(architecture)
+        print(f"📦 Loading configuration and model weights from {stage3_model_path}...")
         config = ConfigClass.from_pretrained(stage3_model_path)
 
         dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
@@ -62,8 +71,12 @@ def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path, hf_user
         
         # Safely align weight tying with safetensors requirements
         handle_weight_tying(model, config)
+        total_params = sum(p.numel() for p in model.parameters())
+        print(f"✓ Model loaded: {total_params:,} parameters in {dtype}.")
 
+        print("📥 Preparing SFT conversation dataset...")
         ds = prepare_sft_dataset("Dolci-Think-SFT-32B", tokenizer, seq_len=1024)
+        print(f"✓ SFT dataset ready with {len(ds):,} conversations.")
 
         args = TrainingArguments(
             max_steps=6,
@@ -92,21 +105,22 @@ def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path, hf_user
         while True:
             ckpt = get_latest_checkpoint(stage4_dir)
             if ckpt is None:
-                print("No valid checkpoint found. Starting training from the beginning.")
+                print("🏁 No valid checkpoint found. Starting SFT training from step 0.")
                 trainer.train()
                 break
             try:
-                print(f"Attempting to resume from checkpoint: {ckpt}")
+                print(f"🔄 Resuming SFT training from checkpoint: {ckpt}")
                 trainer.train(resume_from_checkpoint=ckpt)
                 break
             except Exception as e:
-                print(f"Checkpoint {ckpt} corrupted or failed to load: {e}. Deleting and trying previous.")
+                print(f"⚠️ Checkpoint {ckpt} corrupted or failed to load: {e}. Deleting and checking previous...")
                 shutil.rmtree(ckpt, ignore_errors=True)
                     
         # End Stage Timing
         timer.end_stage("Stage 4: Supervised Finetuning (SFT)", start_t)
 
         # Save model, tokenizer, and generation config according to HF standards
+        print(f"💾 Saving SFT model to: {final_model_dir}...")
         os.makedirs(final_model_dir, exist_ok=True)
         handle_weight_tying(model, config)
 
@@ -114,15 +128,19 @@ def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path, hf_user
         tokenizer.save_pretrained(final_model_dir)
         if hasattr(model, "generation_config") and model.generation_config is not None:
             model.generation_config.save_pretrained(final_model_dir)
+        print(f"✓ SFT model successfully saved to {final_model_dir}.")
 
         clear_all_checkpoints(stage4_dir) # Remove intermediate checkpoints after phase finishes
         
         del model, trainer, ds
         gc.collect()
         torch.cuda.empty_cache()
+    else:
+        print(f"⏭️  [Skipped] Stage 4 SFT already completed. Model located at: {final_model_dir}")
 
     # Save model to Hugging Face Hub"
     repo_name = f"{architecture}_instruct"
+    print(f"\n🚀 Initiating Hugging Face Hub publication for SFT Instruct Model: '{repo_name}'...")
     save_to_hf_hub(final_model_dir, repo_name, hf_username=hf_username)
 
     return final_model_dir
@@ -131,7 +149,6 @@ def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path, hf_user
 def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path, hf_username):
     stage5_dir = os.path.join(base_dir, "Stage5")
     final_model_dir = os.path.join(stage5_dir, "final_model")
-    print(final_model_dir)
 
     # Robust check for Hugging Face single-file or sharded model checkpoints
     is_already_saved = any(
@@ -140,13 +157,22 @@ def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path, hf_user
     )
 
     if not is_already_saved:
-        print(f"=== Starting Stage 5: Direct Preference Optimization (DPO) for {architecture} ===")
+        width = 75
+        print("\n" + "=" * width)
+        print(f"🎯 STAGE 5: DIRECT PREFERENCE OPTIMIZATION (DPO) :: {architecture.upper()}".center(width))
+        print("=" * width)
+        print(f" • Input Policy Model : {stage4_model_path}")
+        print(f" • Output Directory   : {stage5_dir}")
+        print(f" • Dataset Identifier : Dolci-Think-DPO-32B")
+        print("=" * width + "\n")
+        
         os.makedirs(stage5_dir, exist_ok=True)
 
         ConfigClass, ModelClass = get_model_classes(architecture)
         config = ConfigClass.from_pretrained(stage4_model_path)
         dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
 
+        print(f"📦 Loading policy and reference model instances ({dtype})...")
         # Optimized loading for both model instances
         model = ModelClass.from_pretrained(
             stage4_model_path, 
@@ -168,8 +194,11 @@ def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path, hf_user
         # Deactive gradient tracking natively
         ref_model.requires_grad_(False)
         ref_model.eval()
+        print("✓ Policy and Reference models successfully initialized.")
 
+        print("📥 Preparing DPO preference dataset...")
         ds = prepare_dpo_dataset("Dolci-Think-DPO-32B")
+        print(f"✓ DPO dataset ready with {len(ds):,} preference pairs.")
 
         args = DPOConfig(
             max_steps=6,
@@ -200,21 +229,22 @@ def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path, hf_user
         while True:
             ckpt = get_latest_checkpoint(stage5_dir)
             if ckpt is None:
-                print("No valid checkpoint found. Starting training from the beginning.")
+                print("🏁 No valid checkpoint found. Starting DPO training from step 0.")
                 trainer.train()
                 break
             try:
-                print(f"Attempting to resume from checkpoint: {ckpt}")
+                print(f"🔄 Resuming DPO training from checkpoint: {ckpt}")
                 trainer.train(resume_from_checkpoint=ckpt)
                 break
             except Exception as e:
-                print(f"Checkpoint {ckpt} corrupted or failed to load: {e}. Deleting and trying previous.")
+                print(f"⚠️ Checkpoint {ckpt} corrupted or failed to load: {e}. Deleting and checking previous...")
                 shutil.rmtree(ckpt, ignore_errors=True)
                     
         # End Stage Timing
         timer.end_stage("Stage 5: Direct Preference Optimization (DPO)", start_t)
 
         # Save model, tokenizer, and generation config according to HF standards
+        print(f"💾 Saving DPO model to: {final_model_dir}...")
         os.makedirs(final_model_dir, exist_ok=True)
         handle_weight_tying(model, config)
 
@@ -222,15 +252,19 @@ def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path, hf_user
         tokenizer.save_pretrained(final_model_dir)
         if hasattr(model, "generation_config") and model.generation_config is not None:
             model.generation_config.save_pretrained(final_model_dir)
+        print(f"✓ DPO preference model successfully saved to {final_model_dir}.")
 
         clear_all_checkpoints(stage5_dir)
 
         del model, ref_model, trainer, ds
         gc.collect()
         torch.cuda.empty_cache()
+    else:
+        print(f"⏭️  [Skipped] Stage 5 DPO already completed. Model located at: {final_model_dir}")
 
     # Save model to Hugging Face Hub"
     repo_name = f"{architecture}_preference"
+    print(f"\n🚀 Initiating Hugging Face Hub publication for DPO Preference Model: '{repo_name}'...")
     save_to_hf_hub(final_model_dir, repo_name, hf_username=hf_username)
 
     return final_model_dir

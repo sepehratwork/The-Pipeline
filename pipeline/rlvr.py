@@ -7,6 +7,7 @@ import torch
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import time
+from tqdm import tqdm
 
 from data import prepare_rlvr_dataset
 from models import get_model_classes
@@ -16,16 +17,26 @@ from utils.callbacks import StageTimer
 
 
 def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_username=None):
-    print(f"=== Starting Stage 6: RLVR with ALL Algorithms for {architecture} ===")
+    width = 75
+    print("\n" + "=" * width)
+    print(f"🎯 STAGE 6: RLVR SUITE (ALL REINFORCEMENT ALGORITHMS) :: {architecture.upper()}".center(width))
+    print("=" * width)
+    print(f" • Input Preference Model : {stage5_model_path}")
+    print(f" • Target RL Algorithms   : {list(RL_ALGO_REGISTRY.keys())}")
+    print("=" * width + "\n")
+
     stage6_dir = os.path.join(base_dir, "Stage6")
     os.makedirs(stage6_dir, exist_ok=True)
 
+    print("📥 Loading reasoning target dataset for RLVR...")
     ds = prepare_rlvr_dataset("Dolci-Think-RL-32B", tokenizer)
+    print(f"✓ RLVR dataset ready with {len(ds):,} prompts/verification examples.")
     
     ConfigClass, ModelClass = get_model_classes(architecture)
     config = ConfigClass.from_pretrained(stage5_model_path)
     dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"⚙️  Execution Device: {device} | Precision: {dtype}")
 
     # Initialize standard AMP GradScaler if using float16
     use_scaler = (dtype == torch.float16)
@@ -36,7 +47,9 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
 
     # Iterate over all available RL algorithms
     for rl_algo_name in RL_ALGO_REGISTRY.keys():
-        print(f"\n--- Starting RLVR Training with {rl_algo_name.upper()} ---")
+        print("\n" + "-" * 75)
+        print(f"🔄 Starting RLVR Optimization with Algorithm: [{rl_algo_name.upper()}]".center(75))
+        print("-" * 75)
         algo_dir = os.path.join(stage6_dir, rl_algo_name)
         os.makedirs(algo_dir, exist_ok=True)
         
@@ -49,7 +62,7 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
             for fname in ["model.safetensors", "model.safetensors.index.json", "pytorch_model.bin", "pytorch_model.bin.index.json"]
         )
         if is_already_saved:
-            print(f"Algorithm {rl_algo_name.upper()} already completed locally.")
+            print(f"⏭️  [Skipped] Algorithm {rl_algo_name.upper()} already completed locally at {final_model_path}.")
             save_to_hf_hub(final_model_path, repo_name, hf_username=hf_username)
             continue
 
@@ -63,7 +76,7 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
         while True:
             ckpt_dir = get_latest_checkpoint(algo_dir)
             if ckpt_dir:
-                print(f"Attempting to resume {rl_algo_name.upper()} from {ckpt_dir}")
+                print(f"🔄 Resuming {rl_algo_name.upper()} from checkpoint: {ckpt_dir}")
                 try:
                     # Optimized model loading
                     model = ModelClass.from_pretrained(
@@ -76,13 +89,15 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
                     opt_path = os.path.join(ckpt_dir, "optimizer.pt")
                     if os.path.exists(opt_path):
                         optimizer.load_state_dict(torch.load(opt_path))
+                        print("✓ Optimizer state successfully restored.")
                     start_step = get_resume_state(log_file) + 1
+                    print(f"✓ Resuming training loop at step {start_step}.")
                     break
                 except Exception as e:
-                    print(f"Failed to load checkpoint {ckpt_dir}: {e}. Deleting and trying previous.")
+                    print(f"⚠️ Failed to load checkpoint {ckpt_dir}: {e}. Deleting and checking previous...")
                     shutil.rmtree(ckpt_dir, ignore_errors=True)
             else:
-                print(f"No valid checkpoint found for {rl_algo_name.upper()}. Starting training from the beginning.")
+                print(f"🌱 No checkpoint found for {rl_algo_name.upper()}. Starting training from step 0.")
                 model = ModelClass.from_pretrained(
                     stage5_model_path, 
                     config=config,
@@ -93,6 +108,7 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
                 start_step = 0
                 break
 
+        print(f"📦 Loading frozen reference model for {rl_algo_name.upper()}...")
         ref_model = ModelClass.from_pretrained(
             stage5_model_path, 
             config=config,
@@ -155,7 +171,8 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
 
         vocab_size = model.config.vocab_size
 
-        for step in range(start_step, max_steps):
+        step_pbar = tqdm(range(start_step, max_steps), desc=f"🚀 RLVR [{rl_algo_name.upper()}]", unit="step", dynamic_ncols=True)
+        for step in step_pbar:
             example = ds[step % len(ds)]
             
             prompt_text = example["prompt_text"]
@@ -332,12 +349,18 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
                 if torch.cuda.is_available():
                     torch.cuda.reset_peak_memory_stats()
 
-                print(
-                    f"[{rl_algo_name.upper()}] Step {step}: "
-                    f"loss={loss_val:.6f}, variance={var:.6e}, entropy={entropy:.6f}, mean={mean:.6e}, \n"
-                    f"flops={total_flops}, tokens_per_sec={avg_tokens_per_sec:.2f}, \n"
-                    f"vram_allocated={vram_allocated:.3f}GB, vram_reserved={vram_reserved:.3f}GB, \n"
-                    f"learning_rate={lr:.3e}, cot_length={avg_cot_len:.2f}\n\n\n"
+                step_pbar.set_postfix({
+                    "loss": f"{loss_val:.4f}",
+                    "tok/s": f"{avg_tokens_per_sec:.1f}",
+                    "cot": f"{avg_cot_len:.0f}tok",
+                    "vram": f"{vram_allocated:.2f}GB",
+                    "lr": f"{lr:.1e}"
+                })
+
+                tqdm.write(
+                    f"[{rl_algo_name.upper()}] Step {step:02d} | "
+                    f"Loss: {loss_val:.6f} | Var: {var:.4e} | Ent: {entropy:.4f} | "
+                    f"Speed: {avg_tokens_per_sec:.1f} tok/s | CoT: {avg_cot_len:.1f} tok | VRAM: {vram_allocated:.2f}GB"
                 )
 
                 steps_list.append(step)
@@ -405,6 +428,7 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
                 cleanup_checkpoints(algo_dir, keep=2)
 
         # Final algorithm save following HF standard serialization
+        print(f"💾 Saving final RLVR {rl_algo_name.upper()} model to: {final_model_path}...")
         os.makedirs(final_model_path, exist_ok=True)
         if hasattr(model, "tie_weights"):
             model.config.tie_word_embeddings = True
@@ -420,14 +444,17 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
             model.generation_config.save_pretrained(final_model_path)
 
         clear_all_checkpoints(algo_dir)
-        print(f"=== {rl_algo_name.upper()} Training Completed ===")
+        print(f"✓ {rl_algo_name.upper()} Training Completed Successfully.")
         
         del model, ref_model, optimizer, rl_algo
         gc.collect()
         torch.cuda.empty_cache()
 
+        print(f"🚀 Publishing RLVR '{repo_name}' to Hugging Face Hub...")
         save_to_hf_hub(final_model_path, repo_name, hf_username=hf_username)
 
         global_timer.end_stage(stage_key, start_t)
 
-    print("=== Stage 6 Completed Successfully ===")
+    print("\n" + "=" * 75)
+    print("✅ Stage 6 Completed Successfully for All Algorithms!".center(75))
+    print("=" * 75 + "\n")

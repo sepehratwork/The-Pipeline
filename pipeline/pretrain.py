@@ -10,6 +10,21 @@ from utils import GradientMetricsCallback, get_latest_checkpoint, clear_all_chec
 from utils.callbacks import StageTimer
 
 
+def _print_pretrain_stage_banner(stage_name, architecture, seq_len, train_args, config_kwargs):
+    width = 75
+    print("\n" + "=" * width)
+    print(f"🎯 {stage_name.upper()} :: {architecture.upper()}".center(width))
+    print("=" * width)
+    print(f" • Sequence Length       : {seq_len}")
+    print(f" • Max Training Steps    : {train_args.get('max_steps', 'N/A')}")
+    print(f" • Per-Device Batch Size : {train_args.get('per_device_train_batch_size', 'N/A')}")
+    print(f" • Learning Rate         : {train_args.get('learning_rate', 'N/A')}")
+    print(f" • LR Scheduler          : {train_args.get('lr_scheduler_type', 'cosine')}")
+    print(f" • Max Position Embeds   : {config_kwargs.get('max_position_embeddings', 'N/A')}")
+    print(f" • YaRN Rope Scaling     : {config_kwargs.get('use_yarn', False)}")
+    print("=" * width + "\n")
+
+
 def _run_pretrain_stage(stage_name, architecture, tokenizer, dataset_path, seq_len, output_dir, config_kwargs, train_args_kwargs, resume_model_path=None):
     final_model_dir = os.path.join(output_dir, "final_model")
     
@@ -20,14 +35,17 @@ def _run_pretrain_stage(stage_name, architecture, tokenizer, dataset_path, seq_l
     )
 
     if not is_already_saved:
-        print(f"=== Starting {stage_name} for {architecture} ===")
+        _print_pretrain_stage_banner(stage_name, architecture, seq_len, train_args_kwargs, config_kwargs)
+        print(f"📁 Output Directory: {output_dir}")
         os.makedirs(output_dir, exist_ok=True)
         
         ConfigClass, ModelClass = get_model_classes(architecture)
         
         dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        print(f"⚙️  Model Precision: {dtype} | CUDA BF16 Support: {torch.cuda.is_bf16_supported()}")
         
         if resume_model_path:
+            print(f"🔄 Loading base weights from previous stage checkpoint: {resume_model_path}")
             config = ConfigClass.from_pretrained(resume_model_path)
             for k, v in config_kwargs.items():
                 setattr(config, k, v)
@@ -40,13 +58,21 @@ def _run_pretrain_stage(stage_name, architecture, tokenizer, dataset_path, seq_l
                 low_cpu_mem_usage=True
             )
         else:
+            print(f"🌱 Initializing model {architecture} from scratch with vocab size {len(tokenizer):,}...")
             config = ConfigClass(vocab_size=len(tokenizer), **config_kwargs)
             model = ModelClass(config).to(dtype)
+
+        total_params = sum(p.numel() for p in model.parameters())
+        trainable_params = sum(p.numel() for p in model.parameters() if p.grad is not None or p.requires_grad)
+        print(f"✓ Model loaded: {total_params:,} parameters ({trainable_params:,} trainable).")
 
         if hasattr(model, "tie_weights"):
             model.tie_weights()
 
+        print(f"📥 Preparing pretrain dataset '{dataset_path}'...")
         ds = prepare_pretrain_dataset(dataset_path, tokenizer, seq_len=seq_len)
+        print(f"✓ Dataset ready with {len(ds):,} tokenized sequences.")
+
         args = TrainingArguments(
             output_dir=output_dir,
             report_to="none",
@@ -77,21 +103,22 @@ def _run_pretrain_stage(stage_name, architecture, tokenizer, dataset_path, seq_l
         while True:
             ckpt = get_latest_checkpoint(output_dir)
             if ckpt is None:
-                print("No valid checkpoint found. Starting training from the beginning.")
+                print("🏁 No existing checkpoint found. Starting training from step 0.")
                 trainer.train()
                 break
             try:
-                print(f"Attempting to resume from checkpoint: {ckpt}")
+                print(f"🔄 Resuming {stage_name} from checkpoint: {ckpt}")
                 trainer.train(resume_from_checkpoint=ckpt)
                 break
             except Exception as e:
-                print(f"Checkpoint {ckpt} corrupted or failed to load: {e}. Deleting and trying previous.")
+                print(f"⚠️ Checkpoint {ckpt} corrupted or failed to load: {e}. Deleting and checking previous...")
                 shutil.rmtree(ckpt, ignore_errors=True)
                 
         # End Stage Timing
         timer.end_stage(stage_name, start_t)
         
         # Save model, tokenizer, and generation config according to HF standards
+        print(f"💾 Saving stage final model and tokenizer to: {final_model_dir}...")
         os.makedirs(final_model_dir, exist_ok=True)
         if hasattr(model, "tie_weights"):
             model.tie_weights()
@@ -100,12 +127,15 @@ def _run_pretrain_stage(stage_name, architecture, tokenizer, dataset_path, seq_l
         tokenizer.save_pretrained(final_model_dir)
         if hasattr(model, "generation_config") and model.generation_config is not None:
             model.generation_config.save_pretrained(final_model_dir)
+        print(f"✓ Model successfully saved to {final_model_dir}.")
 
         clear_all_checkpoints(output_dir) # Remove intermediate checkpoints after phase finishes
 
         del model, trainer, ds
         gc.collect()
         torch.cuda.empty_cache()
+    else:
+        print(f"⏭️  [Skipped] {stage_name} already completed. Checkpoint found at {final_model_dir}")
         
     clear_all_checkpoints(output_dir) # Failsafe cleanup
     return final_model_dir
@@ -141,6 +171,7 @@ def run_stage3_long_context(architecture, tokenizer, base_dir, stage2_model_path
     
     # Save model to Hugging Face Hub"
     repo_name = f"{architecture}_base"
+    print(f"\n🚀 Initiating Hugging Face Hub publication for Base Model: '{repo_name}'...")
     save_to_hf_hub(stage3_model_path, repo_name, hf_username=hf_username)
 
     return stage3_model_path
