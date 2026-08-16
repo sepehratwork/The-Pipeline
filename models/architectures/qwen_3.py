@@ -17,7 +17,7 @@ class Qwen3Config(PretrainedConfig):
     Default parameters are scaled to target ~1 Billion parameters for Qwen3 Dense,
     and ~1 Billion active parameters per token for Qwen3 MoE.
     """
-    model_type = "qwen3"
+    architecture = "qwen_3"
     keys_to_ignore_at_inference = ["past_key_values"]
 
     def __init__(
@@ -74,6 +74,8 @@ class Qwen3TestConfig(Qwen3Config):
     """
     100M Parameter Test Configuration for Qwen3.
     """
+    architecture = "qwen_3_test"
+
     def __init__(
         self,
         vocab_size: int = 151669,

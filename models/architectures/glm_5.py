@@ -82,6 +82,8 @@ class GLM5TestConfig(GLM5Config):
     """
     100M Active Parameter Test Configuration for GLM-5.
     """
+    architecture = "glm_5_test"
+
     def __init__(
         self,
         vocab_size: int = 154880,

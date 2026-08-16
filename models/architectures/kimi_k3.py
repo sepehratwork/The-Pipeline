@@ -111,6 +111,8 @@ class KimiK3TestConfig(KimiK3Config):
     """
     100M Active Parameter Test Configuration for Kimi K3.
     """
+    architecture = "kimi_k3_test"
+
     def __init__(
         self,
         vocab_size: int = 160000,

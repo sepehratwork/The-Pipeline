@@ -69,6 +69,8 @@ class MagistralTestConfig(MagistralConfig):
     """
     100M Parameter Test Configuration for Magistral.
     """
+    architecture = "magistral_test"
+
     def __init__(
         self,
         vocab_size: int = 32768,

@@ -69,6 +69,8 @@ class Nemotron3TestConfig(Nemotron3Config):
     """
     100M Parameter Test Configuration for Nemotron 3.
     """
+    architecture = "nemotron_3_test"
+
     def __init__(
         self,
         vocab_size: int = 100278,

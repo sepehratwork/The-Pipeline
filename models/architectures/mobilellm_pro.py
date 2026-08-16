@@ -21,7 +21,6 @@ class MobileLLMProConfig(PretrainedConfig):
     - Interleaved Local-Global Attention (512 local sliding window)
     """
     architecture = "mobilellm_pro"
-    model_type = "mobilellm_pro"
 
     def __init__(
         self,
@@ -57,6 +56,8 @@ class MobileLLMProTestConfig(MobileLLMProConfig):
     100M Parameter Test Configuration for MobileLLM-Pro.
     Reflects the deep & narrow architectural priority for sub-2B models.
     """
+    architecture = "mobilellm_pro_test"
+
     def __init__(
         self,
         vocab_size=202048,

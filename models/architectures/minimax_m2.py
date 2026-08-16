@@ -68,6 +68,8 @@ class MiniMaxM2TestConfig(MiniMaxM2Config):
     """
     100M Active Parameter Test Configuration for MiniMax-M2.
     """
+    architecture = "minimax_m2_test"
+
     def __init__(
         self,
         vocab_size=100278,
