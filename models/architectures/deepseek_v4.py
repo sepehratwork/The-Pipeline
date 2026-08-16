@@ -13,76 +13,6 @@ from ..utils.mhc import ManifoldConstrainedHyperConnections
 
 class DeepSeekV4Config(PretrainedConfig):
     """
-    Configuration for DeepSeek-V4 scaled to ~1B active parameters.
-    """
-    architecture = "deepseek_v4"
-
-    def __init__(
-        self,
-        vocab_size: int = 100278,
-        hidden_size: int = 1536,
-        intermediate_size: int = 4096,
-        num_hidden_layers: int = 24,
-        num_attention_heads: int = 16,
-        num_key_value_heads: int = 4,
-        max_position_embeddings: int = 8192,
-        rope_theta: float = 500000.0,
-        n_hc: int = 4,
-        t_max: int = 20,
-        compression_rate: int = 4,
-        heavy_compression_rate: int = 128,
-        head_dim: int = 256,
-        attention_topk: int = 256,
-        q_lora_rank: int = 512,
-        indexer_heads: int = 16,
-        indexer_dim: int = 64,
-        num_projection_groups: int = 4,
-        group_intermediate_dim: int = 512,
-        window_size: int = 128,
-        num_routed_experts: int = 64,
-        num_active_experts: int = 6,
-        num_shared_experts: int = 1,
-        hash_routing_layers: int = 3,
-        z_loss_weight: float = 1e-5,
-        mtp_loss_weight: float = 0.3,
-        use_yarn: bool = False,
-        original_max_position_embeddings: int = 8192,
-        tie_word_embeddings: bool = True,
-        **kwargs
-    ):
-        self.vocab_size = vocab_size
-        self.hidden_size = hidden_size
-        self.intermediate_size = intermediate_size
-        self.num_hidden_layers = num_hidden_layers
-        self.num_attention_heads = num_attention_heads
-        self.num_key_value_heads = num_key_value_heads
-        self.max_position_embeddings = max_position_embeddings
-        self.rope_theta = rope_theta
-        self.n_hc = n_hc
-        self.t_max = t_max
-        self.compression_rate = compression_rate
-        self.heavy_compression_rate = heavy_compression_rate
-        self.head_dim = head_dim
-        self.attention_topk = attention_topk
-        self.q_lora_rank = q_lora_rank
-        self.indexer_heads = indexer_heads
-        self.indexer_dim = indexer_dim
-        self.num_projection_groups = num_projection_groups
-        self.group_intermediate_dim = group_intermediate_dim
-        self.window_size = window_size
-        self.num_routed_experts = num_routed_experts
-        self.num_active_experts = num_active_experts
-        self.num_shared_experts = num_shared_experts
-        self.hash_routing_layers = hash_routing_layers
-        self.z_loss_weight = z_loss_weight
-        self.mtp_loss_weight = mtp_loss_weight
-        self.use_yarn = use_yarn
-        self.original_max_position_embeddings = original_max_position_embeddings
-        super().__init__(tie_word_embeddings=tie_word_embeddings, **kwargs)
-
-
-class DeepSeekV4TestConfig(PretrainedConfig):
-    """
     100M Parameter Test Configuration for DeepSeek-V4.
     """
     architecture = "deepseek_v4_test"
@@ -118,6 +48,80 @@ class DeepSeekV4TestConfig(PretrainedConfig):
         use_yarn: bool = False,
         original_max_position_embeddings: int = 8192,
         tie_word_embeddings: bool = True,
+        **kwargs
+    ):
+        super().__init__(
+            vocab_size=vocab_size,
+            hidden_size=hidden_size,
+            intermediate_size=intermediate_size,
+            num_hidden_layers=num_hidden_layers,
+            num_attention_heads=num_attention_heads,
+            num_key_value_heads=num_key_value_heads,
+            max_position_embeddings=max_position_embeddings,
+            rope_theta=rope_theta,
+            n_hc=n_hc,
+            t_max=t_max,
+            compression_rate=compression_rate,
+            heavy_compression_rate=heavy_compression_rate,
+            head_dim=head_dim,
+            attention_topk=attention_topk,
+            q_lora_rank=q_lora_rank,
+            indexer_heads=indexer_heads,
+            indexer_dim=indexer_dim,
+            num_projection_groups=num_projection_groups,
+            group_intermediate_dim=group_intermediate_dim,
+            window_size=window_size,
+            num_routed_experts=num_routed_experts,
+            num_active_experts=num_active_experts,
+            num_shared_experts=num_shared_experts,
+            hash_routing_layers=hash_routing_layers,
+            z_loss_weight=z_loss_weight,
+            mtp_loss_weight=mtp_loss_weight,
+            use_yarn=use_yarn,
+            original_max_position_embeddings=original_max_position_embeddings,
+            tie_word_embeddings=tie_word_embeddings,
+            **kwargs
+        )
+
+
+class DeepSeekV4TestConfig(PretrainedConfig):
+    """
+    100M Parameter Test Configuration for DeepSeek-V4.
+    Calibrated based on DeepSeek-V4 architecture specifications and optimal scaling laws.
+    """
+    architecture = "deepseek_v4_test"
+
+    def __init__(
+        self,
+        vocab_size: int = 32000,                  # Scaled to prevent embedding parameter domination (~16.4M)
+        hidden_size: int = 512,                   # Backbone hidden dimension d
+        intermediate_size: int = 448,             # Fine-grained intermediate dimension per MoE expert (d_ff)
+        num_hidden_layers: int = 12,              # Depth chosen to balance width/depth scaling (R_{D/W})
+        num_attention_heads: int = 8,             # n_h = 8 (8 * 64 = 512)
+        num_key_value_heads: int = 2,             # Retained for standard interface compatibility
+        max_position_embeddings: int = 8192,
+        rope_theta: float = 500000.0,
+        n_hc: int = 4,                            # mHC expansion factor (as in DeepSeek-V4)
+        t_max: int = 20,                          # Sinkhorn-Knopp iterations (as in DeepSeek-V4)
+        compression_rate: int = 4,                # CSA compression rate m = 4
+        heavy_compression_rate: int = 128,        # HCA compression rate m' = 128
+        head_dim: int = 64,                       # Head dimension c = 64
+        attention_topk: int = 32,                 # Scaled top-k for compressed blocks
+        q_lora_rank: int = 256,                   # Query compression rank d_c = d / 2
+        indexer_heads: int = 4,                   # n_h^I = 4
+        indexer_dim: int = 32,                    # c^I = 32
+        num_projection_groups: int = 2,           # g = 2 groups for grouped output projection
+        group_intermediate_dim: int = 128,        # d_g = 128 (satisfies d_g < c * n_h / g = 256)
+        window_size: int = 128,                   # n_win = 128 sliding window tokens
+        num_routed_experts: int = 8,              # Fine-grained routed experts
+        num_active_experts: int = 2,              # Top-2 routing (activation ratio ~ 25%)
+        num_shared_experts: int = 1,              # 1 shared expert always activated
+        hash_routing_layers: int = 2,             # Hash routing for the first 2 layers
+        z_loss_weight: float = 1e-5,
+        mtp_loss_weight: float = 0.3,             # As specified in DeepSeek-V4 pre-training
+        use_yarn: bool = False,
+        original_max_position_embeddings: int = 8192,
+        tie_word_embeddings: bool = True,         # Tied embeddings for parameter efficiency
         **kwargs
     ):
         super().__init__(
