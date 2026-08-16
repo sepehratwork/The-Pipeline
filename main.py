@@ -29,7 +29,7 @@ def print_main_banner(architecture, hf_username, pretrain_dir, posttrain_dir):
     print("=" * width + "\n")
 
 
-def main(hf_token, architecture = "olmo_3", hf_username = "SepehrKerachi"):
+def main(hf_token, architecture, hf_username = "SepehrKerachi"):
 
     pretrain_dir = f"/content/drive/MyDrive/Simulated/ModelsCheckpoints/{architecture}/Pre-Training"
     posttrain_dir = f"/content/drive/MyDrive/Simulated/ModelsCheckpoints/{architecture}/Post-Training"
@@ -102,7 +102,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--architecture", "-a",
         type=str,
-        default="olmo_3",
+        default="olmo_3_test",
         help=f"Choose the name of the architecture: {list(MODEL_REGISTRY.keys())}"
     )
 
