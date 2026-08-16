@@ -43,7 +43,8 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
     scaler = torch.amp.GradScaler("cuda") if use_scaler else None
 
     # Initialize Cumulative Stage 6 Timer
-    global_timer = StageTimer(base_dir)
+    output_dir = os.path.dirname(base_dir)
+    global_timer = StageTimer(output_dir)
 
     # Iterate over all available RL algorithms
     for rl_algo_name in RL_ALGO_REGISTRY.keys():

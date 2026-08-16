@@ -95,7 +95,7 @@ def _run_pretrain_stage(stage_name, architecture, tokenizer, dataset_path, seq_l
         )
         
         # Start Stage Timing
-        base_dir = os.path.dirname(output_dir)
+        base_dir = os.path.dirname(os.path.dirname(output_dir))
         timer = StageTimer(base_dir)
         start_t = timer.start_stage(stage_name)
         

@@ -98,7 +98,8 @@ def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path, hf_user
         )
 
         # Start Stage Timing
-        timer = StageTimer(base_dir)
+        output_dir = os.path.dirname(base_dir)
+        timer = StageTimer(output_dir)
         start_t = timer.start_stage("Stage 4: Supervised Finetuning (SFT)")
         
         # Robust resumption loop
@@ -222,7 +223,8 @@ def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path, hf_user
         )
 
         # Start Stage Timing
-        timer = StageTimer(base_dir)
+        output_dir = os.path.dirname(base_dir)
+        timer = StageTimer(output_dir)
         start_t = timer.start_stage("Stage 5: Direct Preference Optimization (DPO)")
         
         # Robust resumption loop
