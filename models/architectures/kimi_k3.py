@@ -182,7 +182,6 @@ class KimiK3Block(nn.Module):
 
         self.post_attention_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
-        # FFN: Stable LatentMoE or Dense SiTU-GLU
         if config.use_moe:
             self.mlp = StableLatentMoE(config, layer_idx)
         else:
@@ -286,7 +285,7 @@ class KimiK3ForCausalLM(KimiK3PreTrainedModel, GenerationMixin):
         self.post_init()
 
     def forward(self, input_ids, attention_mask=None, position_ids=None, past_key_values=None, labels=None, use_cache=None, **kwargs):
-        outputs, past_kv = self.model(input_ids, attention_mask, position_ids, past_key_values, use_cache, **kwargs)
+        outputs, past_kv = self.model(input_ids, attention_mask=attention_mask, position_ids=position_ids, past_key_values=past_key_values, use_cache=use_cache, **kwargs)
         logits = self.lm_head(outputs)
 
         loss = None
@@ -301,7 +300,11 @@ class KimiK3ForCausalLM(KimiK3PreTrainedModel, GenerationMixin):
 
     def prepare_inputs_for_generation(self, input_ids, past_key_values=None, attention_mask=None, **kwargs):
         if past_key_values is not None:
-            past_length = past_key_values[0][0].shape[-2] if isinstance(past_key_values[0], tuple) else 0
+            past_length = 0
+            for pk in past_key_values:
+                if pk is not None and isinstance(pk, tuple) and len(pk) >= 2 and pk[0] is not None and pk[0].ndim == 4:
+                    past_length = pk[0].shape[-2]
+                    break
             remove_prefix_length = past_length if input_ids.shape[1] > past_length else input_ids.shape[1] - 1
             input_ids = input_ids[:, remove_prefix_length:]
 
@@ -321,7 +324,10 @@ class KimiK3ForCausalLM(KimiK3PreTrainedModel, GenerationMixin):
         }
 
     def _reorder_cache(self, past_key_values, beam_idx):
+        if past_key_values is None:
+            return None
         return tuple(
             tuple(past_state.index_select(0, beam_idx.to(past_state.device)) for past_state in layer_past)
+            if layer_past is not None else None
             for layer_past in past_key_values
         )

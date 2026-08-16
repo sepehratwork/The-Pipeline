@@ -41,8 +41,8 @@ class GroupedQueryAttention(nn.Module):
         self.layer_idx = layer_idx
         self.hidden_size = config.hidden_size
         self.num_heads = config.num_attention_heads
-        self.head_dim = self.hidden_size // self.num_heads
-        self.num_key_value_heads = config.num_key_value_heads
+        self.head_dim = getattr(config, "head_dim", self.hidden_size // self.num_heads)
+        self.num_key_value_heads = getattr(config, "num_key_value_heads", self.num_heads)
         self.num_key_value_groups = self.num_heads // self.num_key_value_heads
 
         self.q_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=False)
@@ -60,13 +60,10 @@ class GroupedQueryAttention(nn.Module):
             base=getattr(config, "rope_theta", 500000.0),
         )
 
-        # Interleaved Local-Global Sliding Window Attention (SWA) Configuration
         sliding_window = getattr(config, "sliding_window", None)
         num_layers = getattr(config, "num_hidden_layers", 30)
 
         if sliding_window is not None:
-            # 3 to 1 local-global ratio: first (0) and last (num_layers - 1) layers are always global;
-            # every 4th layer is global, and remaining layers use local sliding window attention.
             if layer_idx == 0 or layer_idx == (num_layers - 1) or (layer_idx % 4 == 0):
                 self.sliding_window = None
             else:
@@ -94,10 +91,8 @@ class GroupedQueryAttention(nn.Module):
             k = k.repeat_interleave(self.num_key_value_groups, dim=1)
             v = v.repeat_interleave(self.num_key_value_groups, dim=1)
 
-        # Construct Causal / Sliding Window / Padding Attention Mask for PyTorch SDPA
         attn_mask = None
         is_causal = False
-
         has_padding = False
         padding_mask = None
 
@@ -105,7 +100,7 @@ class GroupedQueryAttention(nn.Module):
             if attention_mask.ndim == 2:
                 if (attention_mask == 0).any():
                     has_padding = True
-                    padding_mask = (attention_mask != 0).unsqueeze(1).unsqueeze(2)  # (bsz, 1, 1, kv_seq_len)
+                    padding_mask = (attention_mask != 0).unsqueeze(1).unsqueeze(2)
             elif attention_mask.ndim == 4:
                 has_padding = True
                 if attention_mask.dtype == torch.bool:
@@ -121,7 +116,7 @@ class GroupedQueryAttention(nn.Module):
             k_idx = torch.arange(kv_seq_len, device=device).unsqueeze(0)
             distance = q_idx - k_idx
             swa_mask = (distance >= 0) & (distance < self.sliding_window)
-            swa_mask = swa_mask.unsqueeze(0).unsqueeze(0)  # (1, 1, q_len, kv_seq_len)
+            swa_mask = swa_mask.unsqueeze(0).unsqueeze(0)
 
             if has_padding and padding_mask is not None:
                 attn_mask = padding_mask & swa_mask
@@ -149,26 +144,29 @@ class GroupedQueryAttention(nn.Module):
                     is_causal = False
 
         attn_output = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, is_causal=is_causal)
-
         attn_output = attn_output.transpose(1, 2).contiguous().view(bsz, q_len, self.hidden_size)
         return self.o_proj(attn_output), past_key_value
 
 
 class MultiLatentAttention(nn.Module):
-    """Multi-Latent Attention (MLA) module as specified in DeepSeek-V2/GLM-5/Kimi K3."""
+    """
+    Multi-Latent Attention (MLA) module with NoPE and full-rank output gating
+    as specified in Kimi K3 (Section 2.1.2, Eq. 7).
+    """
     def __init__(self, config, layer_idx: int):
         super().__init__()
         self.config = config
         self.layer_idx = layer_idx
         self.hidden_size = config.hidden_size
         self.num_heads = config.num_attention_heads
-        self.qk_head_dim = getattr(config, "qk_head_dim", 128)
-        self.v_head_dim = getattr(config, "v_head_dim", 128)
+        self.head_dim = getattr(config, "head_dim", self.hidden_size // self.num_heads)
+        self.qk_head_dim = getattr(config, "qk_head_dim", self.head_dim)
+        self.v_head_dim = getattr(config, "v_head_dim", self.head_dim)
         self.rope_head_dim = getattr(config, "rope_head_dim", 0)
         self.use_nope = getattr(config, "use_nope", True)
 
-        self.q_lora_rank = getattr(config, "q_lora_rank", 512)
-        self.kv_lora_rank = getattr(config, "kv_lora_rank", 256)
+        self.q_lora_rank = getattr(config, "q_lora_rank", getattr(config, "latent_dim", 512))
+        self.kv_lora_rank = getattr(config, "kv_lora_rank", getattr(config, "latent_dim", 256) // 2)
         eps = getattr(config, "rms_norm_eps", 1e-6)
 
         if self.q_lora_rank > 0:
@@ -195,9 +193,10 @@ class MultiLatentAttention(nn.Module):
         )
 
         self.use_gated = getattr(config, "use_gated_mla", True)
+        total_v_dim = self.num_heads * self.v_head_dim
         if self.use_gated:
-            self.g_proj = nn.Linear(self.hidden_size, self.hidden_size, bias=False)
-        self.o_proj = nn.Linear(self.hidden_size, self.hidden_size, bias=False)
+            self.g_proj = nn.Linear(self.hidden_size, total_v_dim, bias=False)
+        self.o_proj = nn.Linear(total_v_dim, self.hidden_size, bias=False)
 
         if not self.use_nope and self.rope_head_dim > 0:
             self.rotary_emb = RotaryPositionalEmbedding(
@@ -213,6 +212,7 @@ class MultiLatentAttention(nn.Module):
             compressed_q = self.q_a_layernorm(self.q_a_proj(hidden_states))
             q_content = self.q_b_proj(compressed_q).view(bsz, q_len, self.num_heads, self.qk_head_dim)
         else:
+            compressed_q = None
             q_content = self.q_proj(hidden_states).view(bsz, q_len, self.num_heads, self.qk_head_dim)
 
         kv_compressed = self.kv_a_proj_with_mqa(hidden_states)
@@ -246,7 +246,6 @@ class MultiLatentAttention(nn.Module):
 
         attn_mask = None
         is_causal = False
-
         has_padding = False
         padding_mask = None
 
@@ -287,7 +286,8 @@ class MultiLatentAttention(nn.Module):
                 is_causal = False
 
         attn_output = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, is_causal=is_causal)
-        attn_output = attn_output.transpose(1, 2).contiguous().view(bsz, q_len, self.num_heads * self.v_head_dim)
+        total_v_dim = self.num_heads * self.v_head_dim
+        attn_output = attn_output.transpose(1, 2).contiguous().view(bsz, q_len, total_v_dim)
 
         if self.use_gated:
             gate = torch.sigmoid(self.g_proj(hidden_states))
@@ -297,7 +297,10 @@ class MultiLatentAttention(nn.Module):
 
 
 class KimiDeltaAttention(nn.Module):
-    """Kimi Delta Attention (KDA) module."""
+    """
+    Kimi Delta Attention (KDA) module with bounded decay and full-rank output gating
+    as specified in Kimi K3 (Section 2.1.1, Eq. 1-6).
+    """
     def __init__(self, config, layer_idx: int):
         super().__init__()
         self.config = config
@@ -326,12 +329,13 @@ class KimiDeltaAttention(nn.Module):
         self.v_conv = nn.Conv1d(total_dim, total_dim, kernel_size=self.kernel_size, groups=total_dim, padding=self.kernel_size - 1)
 
         eps = getattr(config, "rms_norm_eps", 1e-6)
-        self.o_norm = RMSNorm(total_dim, eps=eps)
-        self.g_proj = nn.Linear(self.hidden_size, self.hidden_size, bias=False)
-        self.o_proj = nn.Linear(self.hidden_size, self.hidden_size, bias=False)
+        self.o_norm = RMSNorm(self.head_dim, eps=eps)
+        self.g_proj = nn.Linear(self.hidden_size, total_dim, bias=False)
+        self.o_proj = nn.Linear(total_dim, self.hidden_size, bias=False)
 
     def forward(self, hidden_states, attention_mask=None, position_ids=None, past_key_value=None):
         bsz, q_len, _ = hidden_states.size()
+        total_dim = self.num_heads * self.head_dim
 
         q_raw = self.q_proj(hidden_states)
         k_raw = self.k_proj(hidden_states)
@@ -351,7 +355,7 @@ class KimiDeltaAttention(nn.Module):
         g = self.g_min * torch.sigmoid(torch.exp(self.A_h).unsqueeze(0).unsqueeze(0) * z)
         alpha = torch.exp(g)
 
-        if past_key_value is not None and isinstance(past_key_value, tuple) and len(past_key_value) > 0:
+        if past_key_value is not None and isinstance(past_key_value, tuple) and len(past_key_value) > 0 and past_key_value[0] is not None:
             S = past_key_value[0]
         else:
             S = torch.zeros(bsz, self.num_heads, self.head_dim, self.head_dim, device=hidden_states.device, dtype=hidden_states.dtype)
@@ -370,11 +374,12 @@ class KimiDeltaAttention(nn.Module):
             o_t = torch.matmul(S.transpose(-1, -2), q_t.unsqueeze(-1)).squeeze(-1)
             o_outputs.append(o_t)
 
-        o_tilde = torch.stack(o_outputs, dim=1).view(bsz, q_len, self.num_heads * self.head_dim)
+        o_tilde = torch.stack(o_outputs, dim=1).view(bsz, q_len, self.num_heads, self.head_dim)
+        o_normed = self.o_norm(o_tilde).view(bsz, q_len, total_dim)
         present_kv = (S,)
 
         gate = torch.sigmoid(self.g_proj(hidden_states))
-        output = self.o_proj(gate * self.o_norm(o_tilde))
+        output = self.o_proj(gate * o_normed)
 
         return output, present_kv
 
@@ -508,8 +513,6 @@ class HeavilyCompressedAttention(nn.Module):
 class NoRopeGroupedQueryAttention(nn.Module):
     """
     Grouped Query Attention (GQA) WITHOUT Rotary Positional Embeddings (No-RoPE).
-    Used in Nemotron 3 as positional information is implicitly handled by interleaved Mamba-2 layers.
-    Prevents out-of-distribution RoPE issues during context extension up to 1M tokens.
     """
     def __init__(self, config, layer_idx: int):
         super().__init__()
@@ -517,8 +520,8 @@ class NoRopeGroupedQueryAttention(nn.Module):
         self.layer_idx = layer_idx
         self.hidden_size = config.hidden_size
         self.num_heads = config.num_attention_heads
-        self.head_dim = self.hidden_size // self.num_heads
-        self.num_key_value_heads = config.num_key_value_heads
+        self.head_dim = getattr(config, "head_dim", self.hidden_size // self.num_heads)
+        self.num_key_value_heads = getattr(config, "num_key_value_heads", self.num_heads)
         self.num_key_value_groups = self.num_heads // self.num_key_value_heads
 
         self.q_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=False)
@@ -550,7 +553,6 @@ class NoRopeGroupedQueryAttention(nn.Module):
 
         attn_mask = None
         is_causal = False
-
         has_padding = False
         padding_mask = None
 
@@ -590,6 +592,5 @@ class NoRopeGroupedQueryAttention(nn.Module):
                 is_causal = False
 
         attn_output = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, is_causal=is_causal)
-
         attn_output = attn_output.transpose(1, 2).contiguous().view(bsz, q_len, self.hidden_size)
         return self.o_proj(attn_output), past_key_value
