@@ -116,7 +116,7 @@ class MiniMaxM2Block(nn.Module):
     Transformer block for MiniMax-M2 containing Full Multi-Head Self-Attention
     with Grouped Query Attention (GQA) and Fine-Grained MoE with Sigmoid Gating.
     """
-    def __init__(self, config: MiniMaxM2TestConfig, layer_idx: int):
+    def __init__(self, config: MiniMaxM2Config, layer_idx: int):
         super().__init__()
         self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.self_attn = GroupedQueryAttention(config, layer_idx)
@@ -136,7 +136,7 @@ class MiniMaxM2Block(nn.Module):
 
 
 class MiniMaxM2PreTrainedModel(PreTrainedModel):
-    config_class = MiniMaxM2TestConfig
+    config_class = MiniMaxM2Config
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
 
@@ -156,13 +156,19 @@ class MiniMaxM2Model(MiniMaxM2PreTrainedModel):
     """
     Core Transformer decoder model for MiniMax-M2.
     """
-    def __init__(self, config: MiniMaxM2TestConfig):
+    def __init__(self, config: MiniMaxM2Config):
         super().__init__(config)
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size)
         self.layers = nn.ModuleList([MiniMaxM2Block(config, i) for i in range(config.num_hidden_layers)])
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.gradient_checkpointing = False
         self.post_init()
+
+    def get_input_embeddings(self):
+        return self.embed_tokens
+
+    def set_input_embeddings(self, value):
+        self.embed_tokens = value
 
     def forward(self, input_ids, attention_mask=None, position_ids=None, past_key_values=None, use_cache=None, **kwargs):
         if use_cache is None:
@@ -193,22 +199,29 @@ class MiniMaxM2Model(MiniMaxM2PreTrainedModel):
 
 class MiniMaxM2MTPModule(nn.Module):
     """
-    Multi-Token Prediction (MTP) Module (Section 2.3).
-    Predicts the k-th future token during training/speculative decoding draft paths.
+    Multi-Token Prediction (MTP) Module (Section 2.3, Figure 2).
+    Predicts future tokens jointly during training and serves as speculative decoding draft paths.
     """
-    def __init__(self, config: MiniMaxM2TestConfig, depth_k: int):
+    def __init__(self, config: MiniMaxM2Config, depth_k: int):
         super().__init__()
         self.depth_k = depth_k
+        self.norm_h = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.norm_emb = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.proj = nn.Linear(config.hidden_size * 2, config.hidden_size, bias=False)
-        self.pre_norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.layer = MiniMaxM2Block(config, layer_idx=depth_k)
         self.post_norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
-    def forward(self, main_hidden_states, token_embeds):
-        # Concatenate main model hidden states with embeddings of current tokens
-        concat_states = torch.cat([main_hidden_states, token_embeds], dim=-1)
-        hidden_states = self.pre_norm(self.proj(concat_states))
-        hidden_states, _ = self.layer(hidden_states)
+    def forward(self, main_hidden_states, token_embeds, attention_mask=None, position_ids=None):
+        h_normed = self.norm_h(main_hidden_states)
+        emb_normed = self.norm_emb(token_embeds)
+        concat_states = torch.cat([h_normed, emb_normed], dim=-1)
+        hidden_states = self.proj(concat_states)
+
+        if position_ids is None:
+            seq_len = hidden_states.shape[1]
+            position_ids = torch.arange(seq_len, device=hidden_states.device).unsqueeze(0)
+
+        hidden_states, _ = self.layer(hidden_states, attention_mask=attention_mask, position_ids=position_ids)
         return self.post_norm(hidden_states)
 
 
@@ -216,13 +229,13 @@ class MiniMaxM2ForCausalLM(MiniMaxM2PreTrainedModel, GenerationMixin):
     """
     Causal Language Model with MiniMax-M2 backbone and Multi-Token Prediction (MTP) support.
     """
-    def __init__(self, config: MiniMaxM2TestConfig):
+    def __init__(self, config: MiniMaxM2Config):
         super().__init__(config)
         self.model = MiniMaxM2Model(config)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
         # Multi-Token Prediction (MTP) modules (Section 2.3)
-        if config.num_mtp_modules > 0:
+        if getattr(config, "num_mtp_modules", 0) > 0:
             self.mtp_modules = nn.ModuleList([
                 MiniMaxM2MTPModule(config, k + 1) for k in range(config.num_mtp_modules)
             ])
@@ -230,6 +243,18 @@ class MiniMaxM2ForCausalLM(MiniMaxM2PreTrainedModel, GenerationMixin):
             self.mtp_modules = None
 
         self.post_init()
+
+    def get_input_embeddings(self):
+        return self.model.embed_tokens
+
+    def set_input_embeddings(self, value):
+        self.model.embed_tokens = value
+
+    def get_output_embeddings(self):
+        return self.lm_head
+
+    def set_output_embeddings(self, new_embeddings):
+        self.lm_head = new_embeddings
 
     def forward(self, input_ids, attention_mask=None, position_ids=None, past_key_values=None, labels=None, use_cache=None, **kwargs):
         outputs, past_kv = self.model(input_ids, attention_mask, position_ids, past_key_values, use_cache, **kwargs)
@@ -243,16 +268,25 @@ class MiniMaxM2ForCausalLM(MiniMaxM2PreTrainedModel, GenerationMixin):
             loss_fct = nn.CrossEntropyLoss()
             loss = loss_fct(shift_logits.view(-1, self.config.vocab_size), shift_labels.view(-1))
 
-            # 2. Multi-Token Prediction (MTP) Loss (Section 2.3)
+            # 2. Multi-Token Prediction (MTP) Loss (Section 2.3, Figure 2)
             if self.mtp_modules is not None and self.training:
                 total_mtp_loss = 0.0
+                seq_len = input_ids.shape[1]
                 for k, mtp_module in enumerate(self.mtp_modules):
                     step_k = k + 1
-                    if shift_labels.shape[1] > step_k:
-                        h_mtp = outputs[:, :-step_k, :]
+                    if seq_len > step_k + 1:
+                        # Context up to position t (length: seq_len - step_k - 1)
+                        h_mtp = outputs[:, :-(step_k + 1), :]
+                        # Ground truth token embedding at position t + step_k (length: seq_len - step_k - 1)
                         mtp_token_embeds = self.model.embed_tokens(input_ids[:, step_k:-1])
-                        mtp_features = mtp_module(h_mtp, mtp_token_embeds)
+                        
+                        mtp_pos_ids = None
+                        if position_ids is not None:
+                            mtp_pos_ids = position_ids[:, :-(step_k + 1)]
+
+                        mtp_features = mtp_module(h_mtp, mtp_token_embeds, position_ids=mtp_pos_ids)
                         mtp_logits = self.lm_head(mtp_features).float()
+                        # Target label at position t + step_k + 1 (length: seq_len - step_k - 1)
                         mtp_target_labels = labels[:, (step_k + 1):].contiguous()
 
                         mtp_loss = loss_fct(

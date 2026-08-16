@@ -270,17 +270,19 @@ class FineGrainedSigmoidMoE(nn.Module):
         x_flat = hidden_states.view(-1, d)
 
         # 1. Compute Shared Expert output
-        shared_out = self.shared_expert(x_flat) if self.shared_expert is not None else 0.0
+        shared_out = self.shared_expert(x_flat) if self.shared_expert is not None else None
 
         # 2. Sigmoid Gating with Expert Bias (Section 2.2.1)
-        router_logits = self.gate(x_flat) + self.expert_bias
-        scores = torch.sigmoid(router_logits)
+        raw_logits = self.gate(x_flat)
+        scores = torch.sigmoid(raw_logits)
+        biased_scores = scores + self.expert_bias
 
         # 3. Top-K Expert Selection
-        top_weights, top_indices = torch.topk(scores, k=self.num_experts_per_tok, dim=-1)
+        _, top_indices = torch.topk(biased_scores, k=self.num_experts_per_tok, dim=-1)
 
-        # Normalize selected top-k weights
-        top_weights = top_weights / (top_weights.sum(dim=-1, keepdim=True) + 1e-8)
+        # Normalize selected top-k weights using original unbiased sigmoid scores
+        selected_scores = torch.gather(scores, 1, top_indices)
+        top_weights = selected_scores / (selected_scores.sum(dim=-1, keepdim=True) + 1e-8)
         top_weights = top_weights.to(hidden_states.dtype)
 
         # 4. Route tokens to assigned fine-grained experts
@@ -293,7 +295,10 @@ class FineGrainedSigmoidMoE(nn.Module):
                 if mask.any():
                     routed_out[mask] += weight[mask] * self.experts[e_idx](x_flat[mask])
 
-        return (shared_out + routed_out).view(bsz, seq_len, d)
+        if shared_out is not None:
+            routed_out = routed_out + shared_out
+
+        return routed_out.view(bsz, seq_len, d)
 
 
 class LatentMoE(nn.Module):
