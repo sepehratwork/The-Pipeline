@@ -53,7 +53,7 @@ class StageTimer:
         if not times:
             return
         print("\n" + "┌" + "─" * 73 + "┐")
-        print("│" + " 📊 CUMULATIVE TRAINING TIME BREAKDOWN (ALL PHASES)".center(72) + "│")
+        print("│" + " 📊 CUMULATIVE TRAINING TIME BREAKDOWN".center(72) + "│")
         print("├" + "─" * 50 + "┬" + "─" * 22 + "┤")
         print(f"│ {'Stage Name':<48} │ {'Duration':<20} │")
         print("├" + "─" * 50 + "┼" + "─" * 22 + "┤")
