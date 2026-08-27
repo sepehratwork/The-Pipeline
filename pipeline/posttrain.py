@@ -206,7 +206,7 @@ def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path, hf_user
             save_total_limit=2,
             output_dir=stage5_dir, per_device_train_batch_size=1,
             max_grad_norm=1.0,
-            gradient_accumulation_steps=4, learning_rate=8.0e-8, lr_scheduler_type="linear", warmup_ratio=0.1,
+            gradient_accumulation_steps=4, learning_rate=8.0e-8, lr_scheduler_type="linear", warmup_steps=2,
             logging_steps=1, save_steps=2, report_to="none", bf16=torch.cuda.is_bf16_supported(),
             fp16=not torch.cuda.is_bf16_supported(), 
             gradient_checkpointing=True, 

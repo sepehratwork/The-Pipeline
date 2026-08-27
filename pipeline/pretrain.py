@@ -146,7 +146,7 @@ def run_stage1_pretraining(architecture, tokenizer, base_dir):
         "Stage 1: Pretraining", architecture, tokenizer, "dolma3_mix-150B-1025", 1024,
         os.path.join(base_dir, "Stage1"),
         {"max_position_embeddings": 8192, "use_yarn": False},
-        {"max_steps": 6, "per_device_train_batch_size": 1, "learning_rate": 3.0e-4, "lr_scheduler_type": "cosine", "warmup_steps": 2000, "logging_steps": 1, "save_steps": 2}
+        {"max_steps": 6, "per_device_train_batch_size": 1, "learning_rate": 3.0e-4, "lr_scheduler_type": "cosine", "warmup_steps": 2, "logging_steps": 1, "save_steps": 2}
     )
 
 
@@ -155,7 +155,7 @@ def run_stage2_midtraining(architecture, tokenizer, base_dir, stage1_model_path)
         "Stage 2: Midtraining", architecture, tokenizer, "dolma3_dolmino_mix-100B-1125", 1024,
         os.path.join(base_dir, "Stage2"),
         {"max_position_embeddings": 8192, "use_yarn": False},
-        {"max_steps": 6, "per_device_train_batch_size": 1, "learning_rate": 2.074e-4, "lr_scheduler_type": "linear", "warmup_steps": 0, "logging_steps": 1, "save_steps": 2},
+        {"max_steps": 6, "per_device_train_batch_size": 1, "learning_rate": 2.074e-4, "lr_scheduler_type": "linear", "warmup_steps": 2, "logging_steps": 1, "save_steps": 2},
         resume_model_path=stage1_model_path
     )
 
@@ -165,7 +165,7 @@ def run_stage3_long_context(architecture, tokenizer, base_dir, stage2_model_path
         "Stage 3: Long-context Extension", architecture, tokenizer, "dolma3_longmino_mix-100B-1125", 2048,
         os.path.join(base_dir, "Stage3"),
         {"max_position_embeddings": 65536, "use_yarn": True},
-        {"max_steps": 6, "per_device_train_batch_size": 1, "learning_rate": 2.074e-4, "lr_scheduler_type": "linear", "warmup_steps": 200, "logging_steps": 1, "save_steps": 2},
+        {"max_steps": 6, "per_device_train_batch_size": 1, "learning_rate": 2.074e-4, "lr_scheduler_type": "linear", "warmup_steps": 2, "logging_steps": 1, "save_steps": 2},
         resume_model_path=stage2_model_path
     )
     
