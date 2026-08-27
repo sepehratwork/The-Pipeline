@@ -80,35 +80,36 @@ class GLM5Config(PretrainedConfig):
 
 class GLM5TestConfig(GLM5Config):
     """
-    100M Active Parameter Test Configuration for GLM-5.
+    50M Active Parameter Test Configuration for GLM-5.
+    Tied embedding (39.65M) + 8 layers MLA/MoE (~10M) = ~50M active parameters.
     """
     architecture = "glm_5_test"
 
     def __init__(
         self,
         vocab_size: int = 154880,
-        hidden_size: int = 512,
-        intermediate_size: int = 1536,
-        moe_intermediate_size: int = 384,
-        num_hidden_layers: int = 12,
-        num_dense_layers: int = 2,
-        num_attention_heads: int = 8,
+        hidden_size: int = 256,
+        intermediate_size: int = 768,
+        moe_intermediate_size: int = 192,
+        num_hidden_layers: int = 8,
+        num_dense_layers: int = 1,
+        num_attention_heads: int = 4,
         qk_head_dim: int = 64,
         v_head_dim: int = 64,
         rope_head_dim: int = 32,
-        q_lora_rank: int = 256,
-        kv_lora_rank: int = 128,
-        num_routed_experts: int = 32,
-        num_active_experts: int = 4,
+        q_lora_rank: int = 128,
+        kv_lora_rank: int = 64,
+        num_routed_experts: int = 16,
+        num_active_experts: int = 2,
         num_shared_experts: int = 1,
         hash_routing_layers: int = 0,
-        max_position_embeddings: int = 32768,
+        max_position_embeddings: int = 16384,
         rope_theta: float = 1000000.0,
         use_yarn: bool = True,
         original_max_position_embeddings: int = 8192,
         z_loss_weight: float = 1e-5,
         use_dsa: bool = False,
-        topk_indexer: int = 32,
+        topk_indexer: int = 16,
         rms_norm_eps: float = 1e-6,
         tie_word_embeddings: bool = True,
         **kwargs

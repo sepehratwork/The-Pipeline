@@ -67,23 +67,24 @@ class Nemotron3Config(PretrainedConfig):
 
 class Nemotron3TestConfig(Nemotron3Config):
     """
-    100M Parameter Test Configuration for Nemotron 3.
+    50M Active Parameter Test Configuration for Nemotron 3.
+    Embedding (38.5M) + 8 Hybrid Mamba-2/Attention MoE Layers (9.5M active) = ~48.0M active parameters.
     """
     architecture = "nemotron_3_test"
 
     def __init__(
         self,
         vocab_size: int = 100278,
-        hidden_size: int = 768,
-        intermediate_size: int = 1536,
-        num_hidden_layers: int = 12,
-        num_attention_heads: int = 12,
+        hidden_size: int = 384,
+        intermediate_size: int = 768,
+        num_hidden_layers: int = 8,
+        num_attention_heads: int = 6,
         num_key_value_heads: int = 2,
         attn_layer_indices: Optional[List[int]] = None,
-        max_position_embeddings: int = 32768,
+        max_position_embeddings: int = 16384,
         is_moe: bool = True,
-        latent_dim: int = 192,
-        num_routed_experts: int = 16,
+        latent_dim: int = 96,                     # Latent dimension d/4 = 96
+        num_routed_experts: int = 8,
         num_active_experts: int = 2,
         use_mtp: bool = True,
         num_mtp_tokens: int = 2,
@@ -92,7 +93,7 @@ class Nemotron3TestConfig(Nemotron3Config):
         **kwargs
     ):
         if attn_layer_indices is None:
-            attn_layer_indices = [3, 7, 11]
+            attn_layer_indices = [3, 7]           # Attention layers placed at indices 3 and 7
 
         super().__init__(
             vocab_size=vocab_size,

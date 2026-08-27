@@ -53,20 +53,21 @@ class MobileLLMProConfig(PretrainedConfig):
 
 class MobileLLMProTestConfig(MobileLLMProConfig):
     """
-    100M Parameter Test Configuration for MobileLLM-Pro.
-    Reflects the deep & narrow architectural priority for sub-2B models.
+    50M Parameter Test Configuration for MobileLLM-Pro.
+    Follows Deep & Narrow scaling law priority for on-device efficiency:
+    L = 16, d = 192 (Embedding: 38.79M + 16 Layers: 8.7M = ~47.5M parameters).
     """
     architecture = "mobilellm_pro_test"
 
     def __init__(
         self,
         vocab_size=202048,
-        hidden_size=512,
-        intermediate_size=2048,
-        num_hidden_layers=16,
-        num_attention_heads=8,
+        hidden_size=192,
+        intermediate_size=640,                    # ~3.33x hidden_size expansion
+        num_hidden_layers=16,                     # Deep & narrow profile
+        num_attention_heads=6,
         num_key_value_heads=2,
-        max_position_embeddings=32768,
+        max_position_embeddings=16384,
         sliding_window=512,
         rope_theta=500000.0,
         rms_norm_eps=1e-5,

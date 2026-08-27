@@ -67,18 +67,19 @@ class MagistralConfig(PretrainedConfig):
 
 class MagistralTestConfig(MagistralConfig):
     """
-    100M Parameter Test Configuration for Magistral.
+    50M Parameter Test Configuration for Magistral.
+    Embedding (16.78M) + 12 Decoder layers (33.84M) = ~50.6M parameters.
     """
     architecture = "magistral_test"
 
     def __init__(
         self,
         vocab_size: int = 32768,
-        hidden_size: int = 768,
-        intermediate_size: int = 2048,
+        hidden_size: int = 512,
+        intermediate_size: int = 1408,            # Dense SwiGLU (2.75x hidden_size)
         num_hidden_layers: int = 12,
-        num_attention_heads: int = 12,
-        num_key_value_heads: int = 3,
+        num_attention_heads: int = 8,
+        num_key_value_heads: int = 2,             # 4:1 GQA ratio
         head_dim: int = 64,
         max_position_embeddings: int = 8192,
         sliding_window: int = 2048,
@@ -87,7 +88,7 @@ class MagistralTestConfig(MagistralConfig):
         use_moe: bool = False,
         num_local_experts: int = 8,
         num_experts_per_tok: int = 2,
-        moe_intermediate_size: int = 512,
+        moe_intermediate_size: int = 352,
         num_shared_experts: int = 1,
         z_loss_weight: float = 1e-5,
         use_yarn: bool = False,

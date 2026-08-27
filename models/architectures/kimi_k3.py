@@ -109,28 +109,29 @@ class KimiK3Config(PretrainedConfig):
 
 class KimiK3TestConfig(KimiK3Config):
     """
-    100M Active Parameter Test Configuration for Kimi K3.
+    50M Active Parameter Test Configuration for Kimi K3.
+    Scaled with Block AttnRes (2 blocks, 8 layers total: 6 KDA + 2 Gated MLA) = ~49M active parameters.
     """
     architecture = "kimi_k3_test"
 
     def __init__(
         self,
         vocab_size: int = 160000,
-        hidden_size: int = 512,
-        num_hidden_layers: int = 12,
-        num_attention_heads: int = 8,
+        hidden_size: int = 256,
+        num_hidden_layers: int = 8,
+        num_attention_heads: int = 4,
         head_dim: int = 64,
         kda_ratio: int = 3,
-        latent_dim: int = 256,
-        num_routed_experts: int = 32,
-        num_active_experts: int = 4,
+        latent_dim: int = 128,                    # 0.5 * hidden_size
+        num_routed_experts: int = 16,
+        num_active_experts: int = 2,
         num_shared_experts: int = 1,
-        moe_intermediate_size: int = 384,
-        shared_intermediate_size: int = 768,
-        dense_intermediate_size: int = 1536,
+        moe_intermediate_size: int = 192,
+        shared_intermediate_size: int = 384,
+        dense_intermediate_size: int = 768,
         use_moe: bool = True,
-        attn_res_num_blocks: int = 4,
-        max_position_embeddings: int = 128000,
+        attn_res_num_blocks: int = 2,
+        max_position_embeddings: int = 64000,
         rms_norm_eps: float = 1e-6,
         z_loss_weight: float = 1e-5,
         tie_word_embeddings: bool = True,

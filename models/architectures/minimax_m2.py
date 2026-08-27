@@ -66,23 +66,24 @@ class MiniMaxM2Config(PretrainedConfig):
 
 class MiniMaxM2TestConfig(MiniMaxM2Config):
     """
-    100M Active Parameter Test Configuration for MiniMax-M2.
+    50M Active Parameter Test Configuration for MiniMax-M2.
+    Embedding (38.5M) + 8 Fine-Grained MoE Layers (10.56M active) = ~49.06M active parameters.
     """
     architecture = "minimax_m2_test"
 
     def __init__(
         self,
         vocab_size=100278,
-        hidden_size=768,
-        intermediate_size=256,
-        num_hidden_layers=12,
-        num_attention_heads=12,
+        hidden_size=384,
+        intermediate_size=128,                    # Per fine-grained expert FFN size
+        num_hidden_layers=8,
+        num_attention_heads=6,
         num_key_value_heads=2,
-        num_experts=32,
+        num_experts=16,
         num_experts_per_tok=4,
         num_shared_experts=1,
-        shared_expert_intermediate_size=512,
-        max_position_embeddings=32768,
+        shared_expert_intermediate_size=256,
+        max_position_embeddings=16384,
         rope_theta=500000.0,
         rms_norm_eps=1e-6,
         num_mtp_modules=1,

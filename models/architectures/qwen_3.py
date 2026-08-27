@@ -72,19 +72,20 @@ class Qwen3Config(PretrainedConfig):
 
 class Qwen3TestConfig(Qwen3Config):
     """
-    100M Parameter Test Configuration for Qwen3.
+    50M Parameter Test Configuration for Qwen3.
+    Embedding (38.83M) + 10 Decoder layers (9.6M active) = ~48.43M parameters.
     """
     architecture = "qwen_3_test"
 
     def __init__(
         self,
         vocab_size: int = 151669,
-        hidden_size: int = 512,
-        intermediate_size: int = 1536,
-        num_hidden_layers: int = 12,
-        num_attention_heads: int = 8,
+        hidden_size: int = 256,
+        intermediate_size: int = 704,             # 2.75x hidden_size expansion
+        num_hidden_layers: int = 10,
+        num_attention_heads: int = 4,
         num_key_value_heads: int = 2,
-        max_position_embeddings: int = 32768,
+        max_position_embeddings: int = 16384,
         rope_theta: float = 1000000.0,
         rms_norm_eps: float = 1e-6,
         use_sliding_window: bool = False,
@@ -92,9 +93,9 @@ class Qwen3TestConfig(Qwen3Config):
         z_loss_weight: float = 1e-5,
         tie_word_embeddings: bool = True,
         is_moe: bool = False,
-        num_experts: int = 32,
-        num_experts_per_tok: int = 4,
-        moe_intermediate_size: int = 256,
+        num_experts: int = 16,
+        num_experts_per_tok: int = 2,
+        moe_intermediate_size: int = 176,
         router_aux_loss_coef: float = 0.01,
         enable_thinking: bool = True,
         thinking_budget: Optional[int] = None,
