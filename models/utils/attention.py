@@ -448,12 +448,14 @@ class CompressedSparseAttention(nn.Module):
         c_comp_norm = self.kv_norm(self._compress_kv(hidden_states))
         c_q = self.w_dq(hidden_states)
 
-        queries = self.query_norm(self.w_uq(c_q).view(bsz, q_len, self.num_heads, self.head_dim))
-        scores = torch.matmul(queries, c_comp_norm.transpose(-1, -2)) / math.sqrt(self.head_dim)
-        sink_exp = torch.exp(self.sink_logits).view(1, 1, self.num_heads, 1)
+        queries = self.query_norm(self.w_uq(c_q).view(bsz, q_len, self.num_heads, self.head_dim)).transpose(1, 2)
+        k_comp = c_comp_norm.unsqueeze(1)
+        scores = torch.matmul(queries, k_comp.transpose(-1, -2)) / math.sqrt(self.head_dim)
+        sink_exp = torch.exp(self.sink_logits).view(1, self.num_heads, 1, 1)
         attn_weights = torch.softmax(scores + sink_exp, dim=-1)
 
-        attn_out = torch.matmul(attn_weights, c_comp_norm).view(bsz, q_len, self.n_groups, -1)
+        attn_out = torch.matmul(attn_weights, k_comp)
+        attn_out = attn_out.transpose(1, 2).contiguous().view(bsz, q_len, self.n_groups, -1)
         grouped_outputs = [self.group_projs[g](attn_out[:, :, g, :]) for g in range(self.n_groups)]
         final_output = self.out_proj(torch.cat(grouped_outputs, dim=-1))
 
@@ -501,10 +503,13 @@ class HeavilyCompressedAttention(nn.Module):
         z = torch.softmax(self.w_z(h).view(bsz, n_blocks, self.m_prime, self.head_dim) + self.b_z, dim=-2)
         c_comp = self.kv_norm((z * c).sum(dim=-2))
 
-        queries = self.query_norm(self.w_uq(self.w_dq(hidden_states)).view(bsz, q_len, self.num_heads, self.head_dim))
+        queries = self.query_norm(self.w_uq(self.w_dq(hidden_states)).view(bsz, q_len, self.num_heads, self.head_dim)).transpose(1, 2)
+        k_comp = c_comp.unsqueeze(1)
 
-        attn_weights = torch.softmax(torch.matmul(queries, c_comp.transpose(-1, -2)) / math.sqrt(self.head_dim), dim=-1)
-        attn_out = torch.matmul(attn_weights, c_comp).view(bsz, q_len, self.n_groups, -1)
+        scores = torch.matmul(queries, k_comp.transpose(-1, -2)) / math.sqrt(self.head_dim)
+        attn_weights = torch.softmax(scores, dim=-1)
+        attn_out = torch.matmul(attn_weights, k_comp)
+        attn_out = attn_out.transpose(1, 2).contiguous().view(bsz, q_len, self.n_groups, -1)
 
         grouped_outputs = [self.group_projs[i](attn_out[:, :, i, :]) for i in range(self.n_groups)]
         return self.out_proj(torch.cat(grouped_outputs, dim=-1)), past_key_value
