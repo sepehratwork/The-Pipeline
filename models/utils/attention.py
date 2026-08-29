@@ -333,6 +333,47 @@ class KimiDeltaAttention(nn.Module):
         self.g_proj = nn.Linear(self.hidden_size, total_dim, bias=False)
         self.o_proj = nn.Linear(total_dim, self.hidden_size, bias=False)
 
+    def _causal_conv1d(
+        self,
+        conv_module: nn.Conv1d,
+        x: torch.Tensor,
+        conv_state: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Applies causal 1D depthwise convolution avoiding cuDNN GET engine traversal issues.
+        x: (bsz, seq_len, total_dim)
+        conv_module.weight: (total_dim, 1, kernel_size)
+        conv_state: (bsz, total_dim, kernel_size - 1) or None
+        Returns: (output: (bsz, seq_len, total_dim), next_conv_state: (bsz, total_dim, kernel_size - 1))
+        """
+        bsz, seq_len, dim = x.size()
+        K = conv_module.weight.shape[-1]
+        w = conv_module.weight.squeeze(1)
+        b = conv_module.bias
+
+        x_t = x.transpose(1, 2)  # (bsz, dim, seq_len)
+
+        if conv_state is not None:
+            x_all = torch.cat([conv_state, x_t], dim=-1)
+        else:
+            x_all = F.pad(x_t, (K - 1, 0))
+
+        next_conv_state = x_all[:, :, -(K - 1):] if K > 1 else x_all
+
+        if seq_len == 1:
+            out = (x_all[:, :, -K:] * w.unsqueeze(0)).sum(dim=-1, keepdim=True)
+            if b is not None:
+                out = out + b.unsqueeze(0).unsqueeze(-1)
+            out = out.transpose(1, 2)
+        else:
+            x_unfolded = x_all.unfold(dimension=-1, size=K, step=1)
+            out = torch.einsum("bclk, ck -> bcl", x_unfolded, w)
+            if b is not None:
+                out = out + b.unsqueeze(0).unsqueeze(-1)
+            out = out.transpose(1, 2)
+
+        return out, next_conv_state
+
     def forward(self, hidden_states, attention_mask=None, position_ids=None, past_key_value=None):
         bsz, q_len, _ = hidden_states.size()
         total_dim = self.num_heads * self.head_dim
@@ -341,24 +382,28 @@ class KimiDeltaAttention(nn.Module):
         k_raw = self.k_proj(hidden_states)
         v_raw = self.v_proj(hidden_states)
 
-        q_conv_out = F.silu(self.q_conv(q_raw.transpose(1, 2))[:, :, :q_len].transpose(1, 2))
-        k_conv_out = F.silu(self.k_conv(k_raw.transpose(1, 2))[:, :, :q_len].transpose(1, 2))
-        v_conv_out = F.silu(self.v_conv(v_raw.transpose(1, 2))[:, :, :q_len].transpose(1, 2))
+        if past_key_value is not None and isinstance(past_key_value, tuple) and len(past_key_value) > 0 and past_key_value[0] is not None:
+            S = past_key_value[0]
+            conv_state_q = past_key_value[1] if len(past_key_value) > 1 else None
+            conv_state_k = past_key_value[2] if len(past_key_value) > 2 else None
+            conv_state_v = past_key_value[3] if len(past_key_value) > 3 else None
+        else:
+            S = torch.zeros(bsz, self.num_heads, self.head_dim, self.head_dim, device=hidden_states.device, dtype=hidden_states.dtype)
+            conv_state_q, conv_state_k, conv_state_v = None, None, None
 
-        q = F.normalize(q_conv_out.view(bsz, q_len, self.num_heads, self.head_dim), p=2, dim=-1)
-        k = F.normalize(k_conv_out.view(bsz, q_len, self.num_heads, self.head_dim), p=2, dim=-1)
-        v = v_conv_out.view(bsz, q_len, self.num_heads, self.head_dim)
+        q_conv_out, next_conv_q = self._causal_conv1d(self.q_conv, q_raw, conv_state_q)
+        k_conv_out, next_conv_k = self._causal_conv1d(self.k_conv, k_raw, conv_state_k)
+        v_conv_out, next_conv_v = self._causal_conv1d(self.v_conv, v_raw, conv_state_v)
+
+        q = F.normalize(F.silu(q_conv_out).view(bsz, q_len, self.num_heads, self.head_dim), p=2, dim=-1)
+        k = F.normalize(F.silu(k_conv_out).view(bsz, q_len, self.num_heads, self.head_dim), p=2, dim=-1)
+        v = F.silu(v_conv_out).view(bsz, q_len, self.num_heads, self.head_dim)
 
         beta = torch.sigmoid(self.beta_proj(hidden_states))
 
         z = self.z_up(self.z_down(hidden_states)).view(bsz, q_len, self.num_heads, self.head_dim)
         g = self.g_min * torch.sigmoid(torch.exp(self.A_h).unsqueeze(0).unsqueeze(0) * z)
         alpha = torch.exp(g)
-
-        if past_key_value is not None and isinstance(past_key_value, tuple) and len(past_key_value) > 0 and past_key_value[0] is not None:
-            S = past_key_value[0]
-        else:
-            S = torch.zeros(bsz, self.num_heads, self.head_dim, self.head_dim, device=hidden_states.device, dtype=hidden_states.dtype)
 
         o_outputs = []
         for t in range(q_len):
@@ -376,7 +421,7 @@ class KimiDeltaAttention(nn.Module):
 
         o_tilde = torch.stack(o_outputs, dim=1).view(bsz, q_len, self.num_heads, self.head_dim)
         o_normed = self.o_norm(o_tilde).view(bsz, q_len, total_dim)
-        present_kv = (S,)
+        present_kv = (S, next_conv_q, next_conv_k, next_conv_v)
 
         gate = torch.sigmoid(self.g_proj(hidden_states))
         output = self.o_proj(gate * o_normed)

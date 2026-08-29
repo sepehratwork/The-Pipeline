@@ -303,11 +303,12 @@ class KimiK3ForCausalLM(KimiK3PreTrainedModel, GenerationMixin):
         if past_key_values is not None:
             past_length = 0
             for pk in past_key_values:
-                if pk is not None and isinstance(pk, tuple) and len(pk) >= 2 and pk[0] is not None and pk[0].ndim == 4:
+                if pk is not None and isinstance(pk, tuple) and len(pk) == 2 and pk[0] is not None and pk[0].ndim == 4:
                     past_length = pk[0].shape[-2]
                     break
-            remove_prefix_length = past_length if input_ids.shape[1] > past_length else input_ids.shape[1] - 1
-            input_ids = input_ids[:, remove_prefix_length:]
+            if past_length > 0:
+                remove_prefix_length = past_length if input_ids.shape[1] > past_length else input_ids.shape[1] - 1
+                input_ids = input_ids[:, remove_prefix_length:]
 
         position_ids = kwargs.get("position_ids", None)
         if attention_mask is not None and position_ids is None:
@@ -328,7 +329,12 @@ class KimiK3ForCausalLM(KimiK3PreTrainedModel, GenerationMixin):
         if past_key_values is None:
             return None
         return tuple(
-            tuple(past_state.index_select(0, beam_idx.to(past_state.device)) for past_state in layer_past)
+            tuple(
+                past_state.index_select(0, beam_idx.to(past_state.device))
+                if (past_state is not None and isinstance(past_state, torch.Tensor))
+                else past_state
+                for past_state in layer_past
+            )
             if layer_past is not None else None
             for layer_past in past_key_values
         )
