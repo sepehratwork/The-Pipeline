@@ -341,14 +341,9 @@ class KimiDeltaAttention(nn.Module):
         k_raw = self.k_proj(hidden_states)
         v_raw = self.v_proj(hidden_states)
 
-        # Ensure contiguous memory layout before 1D depthwise convolution
-        q_in = q_raw.transpose(1, 2).contiguous()
-        k_in = k_raw.transpose(1, 2).contiguous()
-        v_in = v_raw.transpose(1, 2).contiguous()
-
-        q_conv_out = F.silu(self.q_conv(q_in)[:, :, :q_len].transpose(1, 2).contiguous())
-        k_conv_out = F.silu(self.k_conv(k_in)[:, :, :q_len].transpose(1, 2).contiguous())
-        v_conv_out = F.silu(self.v_conv(v_in)[:, :, :q_len].transpose(1, 2).contiguous())
+        q_conv_out = F.silu(self.q_conv(q_raw.transpose(1, 2))[:, :, :q_len].transpose(1, 2))
+        k_conv_out = F.silu(self.k_conv(k_raw.transpose(1, 2))[:, :, :q_len].transpose(1, 2))
+        v_conv_out = F.silu(self.v_conv(v_raw.transpose(1, 2))[:, :, :q_len].transpose(1, 2))
 
         q = F.normalize(q_conv_out.view(bsz, q_len, self.num_heads, self.head_dim), p=2, dim=-1)
         k = F.normalize(k_conv_out.view(bsz, q_len, self.num_heads, self.head_dim), p=2, dim=-1)
