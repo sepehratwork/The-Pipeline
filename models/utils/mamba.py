@@ -2,6 +2,8 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from typing import Optional, Tuple
+
 from .normalization import RMSNorm
 
 
@@ -53,7 +55,14 @@ class Mamba2Layer(nn.Module):
         self.norm = RMSNorm(self.d_inner)
         self.out_proj = nn.Linear(self.d_inner, d_model, bias=False)
 
-    def forward(self, hidden_states: torch.Tensor, past_key_value=None):
+    def forward(
+        self, 
+        hidden_states: torch.Tensor, 
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
+        past_key_value: Optional[Tuple[torch.Tensor, ...]] = None,
+        **kwargs
+    ):
         bsz, seq_len, _ = hidden_states.shape
 
         # 1. Linear input projection
@@ -89,10 +98,13 @@ class Mamba2Layer(nn.Module):
         decay = torch.exp(A.view(1, 1, self.nheads, 1) * dt.unsqueeze(-1))
         
         y_states = []
-        h = torch.zeros(
-            bsz, self.nheads, self.headdim, self.d_state, 
-            device=hidden_states.device, dtype=hidden_states.dtype
-        )
+        if past_key_value is not None and isinstance(past_key_value, tuple) and len(past_key_value) > 0 and past_key_value[0] is not None:
+            h = past_key_value[0]
+        else:
+            h = torch.zeros(
+                bsz, self.nheads, self.headdim, self.d_state, 
+                device=hidden_states.device, dtype=hidden_states.dtype
+            )
         
         for t in range(seq_len):
             dt_t = dt[:, t, :, None, None]

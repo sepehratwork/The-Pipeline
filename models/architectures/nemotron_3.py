@@ -146,12 +146,18 @@ class Nemotron3Block(nn.Module):
     def forward(self, hidden_states, attention_mask=None, position_ids=None, past_key_value=None):
         # 1. Sequence Mixer Stage
         residual = hidden_states
-        mixer_states, present_kv = self.mixer(
-            self.input_layernorm(hidden_states), 
-            attention_mask=attention_mask if self.is_attn_layer else None,
-            position_ids=position_ids if self.is_attn_layer else None, 
-            past_key_value=past_key_value
-        )
+        if self.is_attn_layer:
+            mixer_states, present_kv = self.mixer(
+                self.input_layernorm(hidden_states), 
+                attention_mask=attention_mask,
+                position_ids=position_ids, 
+                past_key_value=past_key_value
+            )
+        else:
+            mixer_states, present_kv = self.mixer(
+                self.input_layernorm(hidden_states), 
+                past_key_value=past_key_value
+            )
         hidden_states = residual + mixer_states
 
         # 2. Feed-Forward Stage
