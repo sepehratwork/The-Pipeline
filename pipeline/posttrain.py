@@ -33,7 +33,7 @@ def handle_weight_tying(model, config):
                 output_embeds.weight = torch.nn.Parameter(output_embeds.weight.clone())
 
 
-def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path, hf_username, seq_len_scale_factor = 1):
+def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path, hf_username, seq_len_scale_factor):
     stage4_dir = os.path.join(base_dir, "Stage4")
     final_model_dir = os.path.join(stage4_dir, "final_model")
 
@@ -44,7 +44,7 @@ def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path, hf_user
     )
 
     seq_len = 32768
-    seq_len = seq_len / (2 ** seq_len_scale_factor)
+    seq_len = int(seq_len / (2 ** seq_len_scale_factor))
 
     if not is_already_saved:
         width = 75
@@ -150,7 +150,7 @@ def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path, hf_user
     return final_model_dir
 
 
-def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path, hf_username, seq_len_scale_factor = 1):
+def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path, hf_username, seq_len_scale_factor):
     stage5_dir = os.path.join(base_dir, "Stage5")
     final_model_dir = os.path.join(stage5_dir, "final_model")
 

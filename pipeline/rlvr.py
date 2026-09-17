@@ -16,7 +16,7 @@ from utils import generate_completions, get_resume_state, get_latest_checkpoint,
 from utils.callbacks import StageTimer
 
 
-def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_username=None):
+def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_username, seq_len_scale_factor):
     width = 75
     print("\n" + "=" * width)
     print(f"🎯 STAGE 6: RLVR SUITE (ALL REINFORCEMENT ALGORITHMS) :: {architecture.upper()}".center(width))
@@ -135,6 +135,8 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
 
         max_steps, group_size, gradient_accumulation_steps = 1400, 8, 64
         max_prompt_length, max_completion_length = 2048, 32768
+        max_prompt_length, max_completion_length /= (2 ** seq_len_scale_factor)
+        max_prompt_length, max_completion_length = int(max_prompt_length), int(max_completion_length)
 
         steps_list, variances, entropies, means, losses, flops_list = [], [], [], [], [], []
         tokens_per_sec_list = []

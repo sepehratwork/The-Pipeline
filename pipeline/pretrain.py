@@ -34,7 +34,7 @@ def _run_pretrain_stage(stage_name, architecture, tokenizer, dataset_path, seq_l
         for fname in ["model.safetensors", "model.safetensors.index.json", "pytorch_model.bin", "pytorch_model.bin.index.json"]
     )
 
-    seq_len = seq_len / (2 ** seq_len_scale_factor)
+    seq_len = int(seq_len / (2 ** seq_len_scale_factor))
 
     if not is_already_saved:
         _print_pretrain_stage_banner(stage_name, architecture, seq_len, train_args_kwargs, config_kwargs)
