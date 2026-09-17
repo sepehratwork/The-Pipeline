@@ -62,6 +62,8 @@ def main(hf_token, architecture, hf_username = "SepehrKerachi"):
 
     print(f"✓ Tokenizer ready. Vocab size: {len(tokenizer):,} | Pad Token ID: {tokenizer.pad_token_id} | EOS Token ID: {tokenizer.eos_token_id}\n")
 
+    seq_len_scale_factor = 1
+
     # ==========================================
     # Pre-training Stages & OLMES Evaluation
     # ==========================================
@@ -70,11 +72,11 @@ def main(hf_token, architecture, hf_username = "SepehrKerachi"):
     print("  PHASE 1: PRE-TRAINING SUITE (Stages 1 to 3)".center(80))
     print("#" * 80 + "\n")
 
-    stage1_model = run_stage1_pretraining(architecture, tokenizer, pretrain_dir)
+    stage1_model = run_stage1_pretraining(architecture, tokenizer, pretrain_dir, seq_len_scale_factor)
 
-    stage2_model = run_stage2_midtraining(architecture, tokenizer, pretrain_dir, stage1_model)
+    stage2_model = run_stage2_midtraining(architecture, tokenizer, pretrain_dir, stage1_model, seq_len_scale_factor)
 
-    stage3_model = run_stage3_long_context(architecture, tokenizer, pretrain_dir, stage2_model, hf_username=hf_username)
+    stage3_model = run_stage3_long_context(architecture, tokenizer, pretrain_dir, stage2_model, seq_len_scale_factor, hf_username=hf_username)
 
     # ==========================================
     # Post-training Stages & OLMo 3 Evaluation
@@ -84,11 +86,11 @@ def main(hf_token, architecture, hf_username = "SepehrKerachi"):
     print("  PHASE 2: POST-TRAINING SUITE (Stages 4 to 6)".center(80))
     print("#" * 80 + "\n")
 
-    stage4_model = run_stage4_sft(architecture, tokenizer, posttrain_dir, stage3_model, hf_username=hf_username)
+    stage4_model = run_stage4_sft(architecture, tokenizer, posttrain_dir, stage3_model, hf_username=hf_username, seq_len_scale_factor=seq_len_scale_factor)
 
-    stage5_model = run_stage5_dpo(architecture, tokenizer, posttrain_dir, stage4_model, hf_username=hf_username)
+    stage5_model = run_stage5_dpo(architecture, tokenizer, posttrain_dir, stage4_model, hf_username=hf_username, seq_len_scale_factor=seq_len_scale_factor)
 
-    stage6_model = run_stage6_rlvr(architecture, tokenizer, posttrain_dir, stage5_model, hf_username=hf_username)
+    stage6_model = run_stage6_rlvr(architecture, tokenizer, posttrain_dir, stage5_model, hf_username=hf_username, seq_len_scale_factor=seq_len_scale_factor)
 
     print("\n" + "=" * 80)
     print("🎉 Training pipeline completed successfully!".center(80))
