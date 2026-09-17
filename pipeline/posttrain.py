@@ -75,14 +75,14 @@ def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path, hf_user
         print(f"✓ Model loaded: {total_params:,} parameters in {dtype}.")
 
         print("📥 Preparing SFT conversation dataset...")
-        ds = prepare_sft_dataset("Dolci-Think-SFT-32B", tokenizer, seq_len=1024)
+        ds = prepare_sft_dataset("Dolci-Think-SFT-32B", tokenizer, seq_len=32768)
         print(f"✓ SFT dataset ready with {len(ds):,} conversations.")
 
         args = TrainingArguments(
-            max_steps=6,
+            num_train_epochs=2,
             save_total_limit=2, 
             output_dir=stage4_dir, per_device_train_batch_size=1,
-            gradient_accumulation_steps=4, learning_rate=5.0e-5, logging_steps=1, save_steps=2,
+            gradient_accumulation_steps=32, learning_rate=5.0e-5, logging_steps=10, save_steps=500,
             report_to="none", bf16=torch.cuda.is_bf16_supported(), fp16=not torch.cuda.is_bf16_supported(),
             gradient_checkpointing=True,
             gradient_checkpointing_kwargs={"use_reentrant": False},
@@ -202,18 +202,18 @@ def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path, hf_user
         print(f"✓ DPO dataset ready with {len(ds):,} preference pairs.")
 
         args = DPOConfig(
-            max_steps=6,
+            num_train_epochs=1,
             save_total_limit=2,
             output_dir=stage5_dir, per_device_train_batch_size=1,
             max_grad_norm=1.0,
-            gradient_accumulation_steps=4, learning_rate=8.0e-8, lr_scheduler_type="linear", warmup_steps=2,
-            logging_steps=1, save_steps=2, report_to="none", bf16=torch.cuda.is_bf16_supported(),
+            gradient_accumulation_steps=128, learning_rate=8.0e-8, lr_scheduler_type="linear", warmup_ratio=0.1,
+            logging_steps=10, save_steps=500, report_to="none", bf16=torch.cuda.is_bf16_supported(),
             fp16=not torch.cuda.is_bf16_supported(), 
             gradient_checkpointing=True, 
             gradient_checkpointing_kwargs={"use_reentrant": False},
             optim="adamw_torch_fused",
             beta=5.0, 
-            max_length=2048,
+            max_length=16384,
             # save_safetensors=True,  # Standard Hugging Face safetensors format
         )
 
