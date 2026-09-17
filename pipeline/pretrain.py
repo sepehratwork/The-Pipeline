@@ -25,7 +25,7 @@ def _print_pretrain_stage_banner(stage_name, architecture, seq_len, train_args, 
     print("=" * width + "\n")
 
 
-def _run_pretrain_stage(stage_name, architecture, tokenizer, dataset_path, seq_len, output_dir, config_kwargs, train_args_kwargs, resume_model_path=None):
+def _run_pretrain_stage(stage_name, architecture, tokenizer, dataset_path, seq_len, output_dir, config_kwargs, train_args_kwargs, seq_len_scale_factor, resume_model_path=None):
     final_model_dir = os.path.join(output_dir, "final_model")
     
     # Robust check for Hugging Face single-file or sharded model checkpoints
@@ -33,6 +33,8 @@ def _run_pretrain_stage(stage_name, architecture, tokenizer, dataset_path, seq_l
         os.path.exists(os.path.join(final_model_dir, fname))
         for fname in ["model.safetensors", "model.safetensors.index.json", "pytorch_model.bin", "pytorch_model.bin.index.json"]
     )
+
+    seq_len = seq_len / (2 ** seq_len_scale_factor)
 
     if not is_already_saved:
         _print_pretrain_stage_banner(stage_name, architecture, seq_len, train_args_kwargs, config_kwargs)
@@ -141,7 +143,7 @@ def _run_pretrain_stage(stage_name, architecture, tokenizer, dataset_path, seq_l
     return final_model_dir
 
 
-def run_stage1_pretraining(architecture, tokenizer, base_dir):
+def run_stage1_pretraining(architecture, tokenizer, base_dir, seq_len_scale_factor=1):
     return _run_pretrain_stage(
         "Stage 1: Pretraining", architecture, tokenizer, "dolma3_mix-150B-1025", 8192,
         os.path.join(base_dir, "Stage1"),
@@ -155,11 +157,12 @@ def run_stage1_pretraining(architecture, tokenizer, base_dir):
             "warmup_steps": 2000,
             "logging_steps": 10,
             "save_steps": 1000
-        }
+        },
+        seq_len_scale_factor
     )
 
 
-def run_stage2_midtraining(architecture, tokenizer, base_dir, stage1_model_path):
+def run_stage2_midtraining(architecture, tokenizer, base_dir, stage1_model_path, seq_len_scale_factor=1):
     return _run_pretrain_stage(
         "Stage 2: Midtraining", architecture, tokenizer, "dolma3_dolmino_mix-100B-1125", 8192,
         os.path.join(base_dir, "Stage2"),
@@ -174,11 +177,12 @@ def run_stage2_midtraining(architecture, tokenizer, base_dir, stage1_model_path)
             "logging_steps": 10,
             "save_steps": 1000
         },
+        seq_len_scale_factor,
         resume_model_path=stage1_model_path
     )
 
 
-def run_stage3_long_context(architecture, tokenizer, base_dir, stage2_model_path, hf_username=None):
+def run_stage3_long_context(architecture, tokenizer, base_dir, stage2_model_path, seq_len_scale_factor=1, hf_username=None):
     stage3_model_path = _run_pretrain_stage(
         "Stage 3: Long-context Extension", architecture, tokenizer, "dolma3_longmino_mix-100B-1125", 65536,
         os.path.join(base_dir, "Stage3"),
@@ -193,6 +197,7 @@ def run_stage3_long_context(architecture, tokenizer, base_dir, stage2_model_path
             "logging_steps": 10,
             "save_steps": 1000
         },
+        seq_len_scale_factor,
         resume_model_path=stage2_model_path
     )
     

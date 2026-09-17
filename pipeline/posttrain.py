@@ -33,7 +33,7 @@ def handle_weight_tying(model, config):
                 output_embeds.weight = torch.nn.Parameter(output_embeds.weight.clone())
 
 
-def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path, hf_username):
+def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path, hf_username, seq_len_scale_factor = 1):
     stage4_dir = os.path.join(base_dir, "Stage4")
     final_model_dir = os.path.join(stage4_dir, "final_model")
 
@@ -42,6 +42,9 @@ def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path, hf_user
         os.path.exists(os.path.join(final_model_dir, fname))
         for fname in ["model.safetensors", "model.safetensors.index.json", "pytorch_model.bin", "pytorch_model.bin.index.json"]
     )
+
+    seq_len = 32768
+    seq_len = seq_len / (2 ** seq_len_scale_factor)
 
     if not is_already_saved:
         width = 75
@@ -75,7 +78,7 @@ def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path, hf_user
         print(f"✓ Model loaded: {total_params:,} parameters in {dtype}.")
 
         print("📥 Preparing SFT conversation dataset...")
-        ds = prepare_sft_dataset("Dolci-Think-SFT-32B", tokenizer, seq_len=32768)
+        ds = prepare_sft_dataset("Dolci-Think-SFT-32B", tokenizer, seq_len=seq_len)
         print(f"✓ SFT dataset ready with {len(ds):,} conversations.")
 
         args = TrainingArguments(
@@ -147,7 +150,7 @@ def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path, hf_user
     return final_model_dir
 
 
-def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path, hf_username):
+def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path, hf_username, seq_len_scale_factor = 1):
     stage5_dir = os.path.join(base_dir, "Stage5")
     final_model_dir = os.path.join(stage5_dir, "final_model")
 
@@ -156,6 +159,9 @@ def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path, hf_user
         os.path.exists(os.path.join(final_model_dir, fname))
         for fname in ["model.safetensors", "model.safetensors.index.json", "pytorch_model.bin", "pytorch_model.bin.index.json"]
     )
+
+    seq_length = 16384
+    seq = seq_length / (2 ** seq_len_scale_factor)
 
     if not is_already_saved:
         width = 75
@@ -213,7 +219,7 @@ def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path, hf_user
             gradient_checkpointing_kwargs={"use_reentrant": False},
             optim="adamw_torch_fused",
             beta=5.0, 
-            max_length=16384,
+            max_length=seq_length,
             # save_safetensors=True,  # Standard Hugging Face safetensors format
         )
 
