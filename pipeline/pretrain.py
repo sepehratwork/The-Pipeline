@@ -158,7 +158,7 @@ def run_stage1_pretraining(architecture, tokenizer, base_dir, seq_len_scale_fact
             "lr_scheduler_type": "cosine",
             "warmup_steps": 2000,
             "logging_steps": 10,
-            "save_steps": 1000
+            "save_steps": 50
         },
         seq_len_scale_factor
     )
@@ -178,7 +178,7 @@ def run_stage2_midtraining(architecture, tokenizer, base_dir, stage1_model_path,
             "lr_scheduler_type": "linear",
             "warmup_steps": 0,
             "logging_steps": 10,
-            "save_steps": 1000
+            "save_steps": 50
         },
         seq_len_scale_factor,
         resume_model_path=stage1_model_path
@@ -199,7 +199,7 @@ def run_stage3_long_context(architecture, tokenizer, base_dir, stage2_model_path
             "lr_scheduler_type": "linear",
             "warmup_steps": 200,
             "logging_steps": 10,
-            "save_steps": 1000
+            "save_steps": 50
         },
         seq_len_scale_factor,
         resume_model_path=stage2_model_path
