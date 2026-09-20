@@ -1,6 +1,8 @@
 import os
 import json
 import time
+import math
+import functools
 import torch
 import matplotlib.pyplot as plt
 from transformers import TrainerCallback
@@ -85,13 +87,14 @@ class GradientMetricsCallback(TrainerCallback):
         self.steps, self.variances, self.entropies, self.means, self.losses, self.flops = [], [], [], [], [], []
         self.vram_allocated = []
         self.vram_reserved = []
-        self.learning_rates = []  # List to collect learning rates
+        self.learning_rates = []
         os.makedirs(self.plot_dir, exist_ok=True)
 
-        # Temporary variables to store gradient metrics calculated right after backward (before optimizer.zero_grad())
+        # Temporary variables stored in CPU RAM
         self._temp_mean = 0.0
         self._temp_var = 0.0
         self._temp_entropy = 0.0
+        self._metrics_computed_for_step = False
 
         if os.path.exists(self.log_file):
             with open(self.log_file, 'r') as f:
@@ -107,12 +110,8 @@ class GradientMetricsCallback(TrainerCallback):
                         self.vram_allocated.append(data.get('vram_allocated', 0.0))
                         self.vram_reserved.append(data.get('vram_reserved', 0.0))
                         self.learning_rates.append(data.get('learning_rate', 0.0))
-                f.close()
 
     def on_train_begin(self, args, state, control, model=None, optimizer=None, **kwargs):
-        """
-        Resets peak memory stats and hooks key training items.
-        """
         if torch.cuda.is_available():
             torch.cuda.reset_peak_memory_stats()
             
@@ -124,72 +123,129 @@ class GradientMetricsCallback(TrainerCallback):
             self._hook_optimizer(optimizer)
 
     def _hook_optimizer(self, optimizer):
-        # Prevent double-hooking the optimizer during resumptions
         if hasattr(optimizer, '_is_gradient_metrics_hooked') and optimizer._is_gradient_metrics_hooked:
             return
             
         original_step = optimizer.step
         
+        @functools.wraps(original_step)
         def hooked_step(*args, **kwargs):
-            # Capture the gradient metrics right before weights are updated and gradients are cleared
-            if hasattr(self, 'model') and self.model is not None:
+            # Fallback in case on_pre_optimizer_step is not invoked by Trainer
+            if not self._metrics_computed_for_step and hasattr(self, 'model') and self.model is not None:
                 self._calculate_and_store_gradients(self.model)
             return original_step(*args, **kwargs)
             
+        # Prevent PyTorch lr_scheduler UserWarning about overridden step()
+        hooked_step._with_counter = getattr(original_step, '_with_counter', True)
         optimizer.step = hooked_step
         optimizer._is_gradient_metrics_hooked = True
 
+    def on_pre_optimizer_step(self, args, state, control, model=None, optimizer=None, **kwargs):
+        """
+        Native Hugging Face Trainer callback triggered after gradient accumulation 
+        and clipping, right before optimizer.step(). Runs exactly once per global step.
+        """
+        target_model = model if model is not None else self.model
+        if target_model is not None and not self._metrics_computed_for_step:
+            self._calculate_and_store_gradients(target_model)
+
+    def on_substep_end(self, args, state, control, **kwargs):
+        """
+        No-op during micro-batch accumulation to prevent running expensive 
+        gradient calculations 512 times per global step.
+        """
+        pass
+
+    @torch.no_grad()
     def _calculate_and_store_gradients(self, model):
         """
-        Calculates gradient metrics right after backward but before zeroing.
+        Calculates gradient metrics (mean, variance, entropy) in CPU RAM.
+        No large tensors are allocated on the GPU, completely eliminating CUDA OOM.
         """
-        grads = [p.grad.view(-1).float() for p in model.parameters() if p.grad is not None]
-        if not grads:
+        total_elements = 0
+        min_val = float('inf')
+        max_val = float('-inf')
+
+        active_params = []
+        # Pass 1: Global min/max determination across active gradients
+        for p in model.parameters():
+            if p.grad is not None:
+                p_min = p.grad.min().item()
+                p_max = p.grad.max().item()
+                if p_min < min_val:
+                    min_val = p_min
+                if p_max > max_val:
+                    max_val = p_max
+                active_params.append(p)
+
+        if not active_params or not (math.isfinite(min_val) and math.isfinite(max_val)):
+            self._metrics_computed_for_step = True
             return
 
-        all_grads = torch.cat(grads)
-        total_elements = all_grads.numel()
+        # Pass 2: Streaming accumulation in CPU RAM
+        num_bins = 100
+        sum_grads = 0.0
+        sum_sq_grads = 0.0
+        hist_counts = torch.zeros(num_bins, dtype=torch.float64, device="cpu")
+        is_flat_distribution = (min_val >= max_val)
 
-        if total_elements > 0:
-            sum_grads = all_grads.sum().item()
-            sum_sq_grads = (all_grads ** 2).sum().item()
+        for p in active_params:
+            # Transfer only one layer's gradient to CPU RAM in float32; 0 GPU memory is retained
+            g_cpu = p.grad.detach().to(device="cpu", dtype=torch.float32)
+            n = g_cpu.numel()
+            if n == 0:
+                del g_cpu
+                continue
 
-            mean = sum_grads / total_elements
-            var = (sum_sq_grads / total_elements) - (mean ** 2)
+            total_elements += n
+            sum_grads += g_cpu.sum().item()
+            sum_sq_grads += (g_cpu ** 2).sum().item()
 
-            abs_grads = all_grads.abs()
-            sum_abs_grads = abs_grads.sum().item() + 1e-8
-            prob = abs_grads / sum_abs_grads
-            prob = prob[prob > 0]
-            entropy = -torch.sum(prob * torch.log(prob)).item()
+            if not is_flat_distribution:
+                # Compute binned histogram on CPU
+                layer_hist = torch.histc(g_cpu, bins=num_bins, min=min_val, max=max_val).to(torch.float64)
+                hist_counts += layer_hist
+                del layer_hist
 
-            self._temp_mean = mean
-            self._temp_var = var
-            self._temp_entropy = entropy
+            del g_cpu
 
-    def on_substep_end(self, args, state, control, model=None, **kwargs):
-        """
-        Fall-back capture step for gradient accumulation loops where on_substep_end is explicitly run.
-        """
-        if model is None:
-            model = self.model
-        if model is None:
+        if total_elements == 0:
+            self._metrics_computed_for_step = True
             return
 
-        self._calculate_and_store_gradients(model)
+        # 1. Gradient Mean
+        mean = sum_grads / total_elements
+
+        # 2. Gradient Variance
+        var = max(0.0, (sum_sq_grads / total_elements) - (mean ** 2))
+
+        # 3. Gradient Entropy (Shannon entropy of empirical distribution of values)
+        if is_flat_distribution:
+            entropy = 0.0
+        else:
+            probs = hist_counts / total_elements
+            pos_probs = probs[probs > 0]
+            # Shannon entropy: -sum(p * ln(p)) over non-empty histogram bins
+            entropy = -torch.sum(pos_probs * torch.log(pos_probs)).item()
+
+        self._temp_mean = mean
+        self._temp_var = var
+        self._temp_entropy = entropy
+        self._metrics_computed_for_step = True
 
     def on_step_end(self, args, state, control, model=None, **kwargs):
         """
-        Retrieves the cached metrics, measures learning rate and VRAM usage, logs them, and saves the plot.
+        Retrieves cached metrics from CPU RAM, logs them, and generates plots.
         """
         mean = self._temp_mean
         var = self._temp_var
         entropy = self._temp_entropy
 
-        # Reset temporary variables for the next step
+        # Reset temporary variables and calculation flag for the next step
         self._temp_mean = 0.0
         self._temp_var = 0.0
         self._temp_entropy = 0.0
+        self._metrics_computed_for_step = False
 
         loss = state.log_history[-1].get('loss', 0.0) if len(state.log_history) > 0 else 0.0
         current_flops = state.total_flos
@@ -199,14 +255,13 @@ class GradientMetricsCallback(TrainerCallback):
         vram_allocated = torch.cuda.max_memory_allocated() / (1024 ** 3) if torch.cuda.is_available() else 0.0
         vram_reserved = torch.cuda.max_memory_reserved() / (1024 ** 3) if torch.cuda.is_available() else 0.0
         
-        # Reset peak memory statistics for the next step
         if torch.cuda.is_available():
             torch.cuda.reset_peak_memory_stats()
 
-        # Extract current learning rate from the active optimizer
         lr = 0.0
-        if hasattr(self, 'optimizer') and self.optimizer is not None:
-            for param_group in self.optimizer.param_groups:
+        optimizer = getattr(self, 'optimizer', None) or kwargs.get('optimizer', None)
+        if optimizer is not None:
+            for param_group in optimizer.param_groups:
                 lr = param_group.get('lr', 0.0)
                 break
 
@@ -238,14 +293,13 @@ class GradientMetricsCallback(TrainerCallback):
                 'learning_rate': lr
             }) + '\n')
 
-        # Extended plotting with 6 subplots including VRAM and Learning Rate
         plt.figure(figsize=(30, 4))
         for i, (data, title, color) in enumerate(zip(
             [self.variances, self.entropies, self.means, self.losses, self.vram_allocated, self.learning_rates],
             ['Gradient Variance', 'Gradient Entropy', 'Gradient Mean', 'Training Loss', 'Peak VRAM (GB)', 'Learning Rate'],
             ['blue', 'green', 'orange', 'red', 'magenta', 'cyan']
         )):
-            plt.subplot(1, 6, i+1)
+            plt.subplot(1, 6, i + 1)
             plt.plot(self.steps, data, color=color)
             if title == 'Peak VRAM (GB)' and len(self.vram_reserved) > 0:
                 plt.plot(self.steps, self.vram_reserved, color='purple', linestyle='--', label='Reserved')
