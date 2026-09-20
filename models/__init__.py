@@ -1,5 +1,6 @@
 from .architectures import (
     # OLMo 3
+    OLMo3Config,
     OLMo3TestConfig, 
     OLMo3ForCausalLM,
     # DeepSeek V4
@@ -65,6 +66,7 @@ from .utils import (
 # Registry mapping model architecture names to Config and Model classes
 MODEL_REGISTRY = {
     # OLMo 3
+    "olmo_3": (OLMo3Config, OLMo3ForCausalLM),
     "olmo_3_test": (OLMo3TestConfig, OLMo3ForCausalLM),
     # DeepSeek V4
     "deepseek_v4": (DeepSeekV4Config, DeepSeekV4ForCausalLM),

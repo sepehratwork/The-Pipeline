@@ -10,31 +10,34 @@ from ..utils.attention import GroupedQueryAttention
 
 class MobileLLMProConfig(PretrainedConfig):
     """
-    Configuration class for MobileLLM-Pro (1.08B Parameters).
+    Configuration class for MobileLLM-Pro scaled to 500M Parameters (~503.7M).
     
-    Ref: MobileLLM-Pro Technical Report (Meta Reality Labs, 2025)
-    - 30 Transformer layers
-    - Hidden dim: 1280, FFN dim: 6144 (4.8x scaling)
-    - 20 Query Heads, 4 KV Heads (GQA)
-    - Vocab size: 202,048 with shared input/output embeddings
-    - Context length: 128,000 tokens (128k)
-    - Interleaved Local-Global Attention (512 local sliding window)
+    Ref:
+    - MobileLLM-Pro Technical Report (Meta Reality Labs, 2025)
+    - Scaling Laws for Model Shape & Edge Deployment (Bian et al., 2024; Liu et al., 2024)
+    
+    Scaling Adjustments:
+    - Layers reduced from 30 -> 20 (Shallower to increase edge throughput and mitigate inverse depth scaling)
+    - Hidden dim scaled to 960 with head dim 64 (15 Query heads, 3 KV heads preserving 5:1 GQA)
+    - Intermediate dim scaled to 4608 (maintaining exact 4.8x FFN expansion)
+    - Shared vocab embeddings maintained at 202,048 tokens
+    - Context length (128k) and local-global sliding window (512) preserved
     """
     architecture = "mobilellm_pro"
 
     def __init__(
         self,
         vocab_size=202048,
-        hidden_size=1280,
-        intermediate_size=6144,
-        num_hidden_layers=30,
-        num_attention_heads=20,
-        num_key_value_heads=4,
-        max_position_embeddings=128000,
-        sliding_window=512,
+        hidden_size=960,               # Scaled from 1280 to 960
+        intermediate_size=4608,        # 4.8x hidden_size (4.8 * 960 = 4608)
+        num_hidden_layers=20,          # Reduced from 30 to 20 (5 blocks of 4 local-global layers)
+        num_attention_heads=15,        # 960 / 64 = 15 heads
+        num_key_value_heads=3,         # 15 / 3 = 5:1 GQA ratio (matching 20:4 in 1B)
+        max_position_embeddings=128000,# Preserved 128k context support
+        sliding_window=512,            # Preserved local sliding window
         rope_theta=500000.0,
         rms_norm_eps=1e-5,
-        tie_word_embeddings=True,
+        tie_word_embeddings=True,       # Embedding sharing (saves ~194M params)
         **kwargs
     ):
         self.vocab_size = vocab_size

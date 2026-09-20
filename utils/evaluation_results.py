@@ -321,18 +321,21 @@ if __name__ == "__main__":
         "--base-dir", "-b",
         type=str,
         default="/content/drive/MyDrive/Simulated/ModelsCheckpoints",
+        # default="/content/drive/MyDrive/Original/ModelsCheckpoints",
         help="Path to base checkpoints directory"
     )
     parser.add_argument(
         "--output-summary-csv", "-s",
         type=str,
         default="/content/drive/MyDrive/Simulated/summarized_evaluation_results_table.csv",
+        # default="/content/drive/MyDrive/Original/summarized_evaluation_results_table.csv",
         help="Custom output file path for summary CSV (Table 6 style)"
     )
     parser.add_argument(
         "--output-detailed-csv", "-d",
         type=str,
         default="/content/drive/MyDrive/Simulated/detailed_evaluation_results_table.csv",
+        # default="/content/drive/MyDrive/Original/detailed_evaluation_results_table.csv",
         help="Custom output file path for detailed CSV (Table 2 style)"
     )
 

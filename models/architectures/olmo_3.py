@@ -8,6 +8,41 @@ from ..utils.mlp import SwiGLUMLP
 from ..utils.attention import GroupedQueryAttention
 
 
+class OLMo3Config(PretrainedConfig):
+    architecture = "olmo_3"
+    def __init__(
+        self, 
+        vocab_size=100278,
+        hidden_size=1536,                # Scaled for ~500M target following the Wider & Shallower principle (head_dim = 128)
+        intermediate_size=4096,          # Exactly 8/3 * hidden_size (8/3 * 1536 = 4096)
+        num_hidden_layers=12,            # Multiple of 4 satisfying the "3 SWA, 1 Full Attention" rule (3 cycles, last is Full)
+        num_attention_heads=12,          # hidden_size // 128 head_dim = 12
+        num_key_value_heads=4,           # GQA enabled with 3:1 ratio (or 12 for MHA ~494M total params)
+        max_position_embeddings=8192,    # OLMo 3 standard context window
+        sliding_window=4096,             # OLMo 3 standard SWA window
+        rope_theta=500000.0,             # OLMo 3 standard base frequency
+        z_loss_weight=1e-5,              # OLMo 3 standard z-loss
+        use_yarn=False,                  # Standard RoPE during pretraining
+        original_max_position_embeddings=8192,
+        tie_word_embeddings=True,        # Tied embeddings required to preserve parameter budget for transformer layers
+        **kwargs
+    ):
+        self.vocab_size = vocab_size
+        self.hidden_size = hidden_size
+        self.intermediate_size = intermediate_size
+        self.num_hidden_layers = num_hidden_layers
+        self.num_attention_heads = num_attention_heads
+        self.num_key_value_heads = num_key_value_heads
+        self.max_position_embeddings = max_position_embeddings
+        self.sliding_window = sliding_window
+        self.rope_theta = rope_theta
+        self.z_loss_weight = z_loss_weight
+        self.use_yarn = use_yarn
+        self.original_max_position_embeddings = original_max_position_embeddings
+        self.tie_word_embeddings = tie_word_embeddings
+        super().__init__(tie_word_embeddings=tie_word_embeddings, **kwargs)
+
+
 class OLMo3TestConfig(PretrainedConfig):
     architecture = "olmo_3_test"
     def __init__(

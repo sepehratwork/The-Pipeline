@@ -12,34 +12,34 @@ class MagistralConfig(PretrainedConfig):
     """
     Configuration class for the Magistral reasoning language model (arXiv:2506.10910v1).
     
-    Default parameters are scaled to target a ~1 Billion parameter budget (or 1 Billion active
-    parameters in MoE mode) while preserving the architectural design of Magistral Small (24B)
-    and Magistral Medium (Mistral Small 3 / Mistral Medium 3 base).
+    Default parameters are scaled to target a ~500 Million parameter budget (or ~500 Million
+    active parameters in MoE mode) guided by modern scaling laws (optimal depth-to-width ratio,
+    inference throughput optimization, and GQA KV-cache efficiency).
     """
     architecture = "magistral"
 
     def __init__(
         self,
         vocab_size: int = 32768,
-        hidden_size: int = 2048,
-        intermediate_size: int = 5632,        # SwiGLU intermediate size for ~1B parameter budget
-        num_hidden_layers: int = 22,          # 22 layers to achieve ~1.05B parameters
-        num_attention_heads: int = 16,        # 16 Query heads (head_dim = 128)
-        num_key_value_heads: int = 4,         # GQA with 4:1 ratio
-        head_dim: int = 128,
-        max_position_embeddings: int = 32768, # Long-context capability up to 32k/40k tokens
-        sliding_window: int = 4096,           # Sliding Window Attention (SWA) limit
-        rope_theta: float = 1000000.0,        # High rope_theta for reasoning long context
+        hidden_size: int = 1536,              # Scaled for 500M budget (d = 1536)
+        intermediate_size: int = 4096,        # SwiGLU size: (8/3) * 1536 = 4096
+        num_hidden_layers: int = 18,          # 18 layers achieves ~503.4M total parameters
+        num_attention_heads: int = 12,        # 12 Query heads (12 * 128 = 1536)
+        num_key_value_heads: int = 4,         # GQA with 3:1 ratio (efficient KV cache)
+        head_dim: int = 128,                  # Standard Magistral/Mistral head dimension
+        max_position_embeddings: int = 32768, # Long-context reasoning window (up to 32k)
+        sliding_window: int = 4096,           # Sliding Window Attention (SWA)
+        rope_theta: float = 1000000.0,        # Extended base frequency for long contexts
         rms_norm_eps: float = 1e-6,
-        use_moe: bool = False,                 # Set True for Mixture-of-Experts variant
+        use_moe: bool = False,                # Set True for MoE variant
         num_local_experts: int = 8,           # Total routed experts in MoE mode
         num_experts_per_tok: int = 2,         # Top-2 active routed experts
-        moe_intermediate_size: int = 1408,    # Expert size for 1B active parameter MoE budget
-        num_shared_experts: int = 1,          # Shared expert count
+        moe_intermediate_size: int = 1344,    # (2 routed + 1 shared) * 1344 ~ 4032 intermediate
+        num_shared_experts: int = 1,          # 1 shared expert
         z_loss_weight: float = 1e-5,          # Logit stability z-loss factor
         use_yarn: bool = False,
         original_max_position_embeddings: int = 8192,
-        tie_word_embeddings: bool = True,     # Tied embeddings standard for 1B scale
+        tie_word_embeddings: bool = True,     # Tied embeddings standard at <=1B scale
         **kwargs
     ):
         self.vocab_size = vocab_size

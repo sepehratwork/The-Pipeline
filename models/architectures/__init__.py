@@ -1,4 +1,4 @@
-from .olmo_3 import OLMo3TestConfig, OLMo3ForCausalLM
+from .olmo_3 import OLMo3Config, OLMo3TestConfig, OLMo3ForCausalLM
 from .deepseek_v4 import DeepSeekV4Config, DeepSeekV4TestConfig, DeepSeekV4ForCausalLM
 from .glm_5 import GLM5Config, GLM5TestConfig, GLM5ForCausalLM
 from .kimi_k3 import KimiK3Config, KimiK3TestConfig, KimiK3ForCausalLM
@@ -10,6 +10,7 @@ from .qwen_3 import Qwen3Config, Qwen3TestConfig, Qwen3ForCausalLM, Qwen3MoEForC
 
 __all__ = [
     # OLMo 3
+    "OLMo3Config",
     "OLMo3TestConfig",
     "OLMo3ForCausalLM",
     # DeepSeek V4

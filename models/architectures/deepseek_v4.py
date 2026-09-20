@@ -13,17 +13,18 @@ from ..utils.mhc import ManifoldConstrainedHyperConnections
 
 class DeepSeekV4Config(PretrainedConfig):
     """
-    100M Parameter Test Configuration for DeepSeek-V4.
+    500M Active Parameter Configuration for DeepSeek-V4.
+    Scaled according to DeepSeek-V4 architecture rules and modern MoE scaling laws.
     """
-    architecture = "deepseek_v4_test"
+    architecture = "deepseek_v4"
 
     def __init__(
         self,
         vocab_size: int = 100278,
-        hidden_size: int = 512,
-        intermediate_size: int = 1536,
-        num_hidden_layers: int = 12,
-        num_attention_heads: int = 8,
+        hidden_size: int = 1024,
+        intermediate_size: int = 1024,
+        num_hidden_layers: int = 16,
+        num_attention_heads: int = 16,
         num_key_value_heads: int = 2,
         max_position_embeddings: int = 8192,
         rope_theta: float = 500000.0,
@@ -31,19 +32,19 @@ class DeepSeekV4Config(PretrainedConfig):
         t_max: int = 20,
         compression_rate: int = 4,
         heavy_compression_rate: int = 128,
-        head_dim: int = 64,
-        attention_topk: int = 64,
+        head_dim: int = 128,
+        attention_topk: int = 128,
         q_lora_rank: int = 256,
-        indexer_heads: int = 8,
-        indexer_dim: int = 32,
-        num_projection_groups: int = 2,
+        indexer_heads: int = 16,
+        indexer_dim: int = 64,
+        num_projection_groups: int = 4,
         group_intermediate_dim: int = 256,
         window_size: int = 128,
-        num_routed_experts: int = 32,
-        num_active_experts: int = 4,
+        num_routed_experts: int = 64,
+        num_active_experts: int = 6,
         num_shared_experts: int = 1,
-        hash_routing_layers: int = 2,
-        z_loss_weight: float = 1e-5,
+        hash_routing_layers: int = 3,
+        z_loss_weight: float = 1e-4,
         mtp_loss_weight: float = 0.3,
         use_yarn: bool = False,
         original_max_position_embeddings: int = 8192,
