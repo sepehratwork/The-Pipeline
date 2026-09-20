@@ -13,41 +13,39 @@ from ..utils.attention import GroupedQueryAttention
 class Qwen3Config(PretrainedConfig):
     """
     Configuration class for the Qwen3 Language Model family.
-
-    Scaled to target ~500 Million parameters (0.5B/0.6B scale) for Qwen3 Dense,
-    and ~500 Million active parameters per token for Qwen3 MoE.
+    
+    Default parameters are scaled to target ~500 Million parameters for Qwen3 Dense,
+    and ~500 Million active parameters per token for Qwen3 MoE, adhering to the 
+    Qwen3 architecture rules and scaling laws with a vocabulary size of 100,278.
     """
-
     architecture = "qwen_3"
     keys_to_ignore_at_inference = ["past_key_values"]
 
     def __init__(
         self,
-        vocab_size: int = 151669,  # Qwen3 Byte-level BPE tokenizer vocabulary size (Section 2)
-        hidden_size: int = 1024,  # Scaled hidden dimension (head_dim = 1024 / 16 = 64)
-        intermediate_size: int = 2816,  # SwiGLU intermediate size (~2.75x hidden_size: 1024 * 2.75 = 2816)
-        num_hidden_layers: int = 28,  # Number of Transformer layers (Table 1: Qwen3-0.6B)
-        num_attention_heads: int = 16,  # Table 1: Qwen3-0.6B Query attention heads
-        num_key_value_heads: int = 8,  # Table 1: Qwen3-0.6B GQA KV heads (ratio 2:1)
-        max_position_embeddings: int = 32768,  # Table 1: Context length window (32K for <= 1.7B)
-        rope_theta: float = 1000000.0,  # Section 3.2: ABF RoPE base frequency (1,000,000)
-        rms_norm_eps: float = 1e-6,  # Pre-normalization RMSNorm epsilon
-        use_sliding_window: bool = False,  # SWA toggle
-        sliding_window: Optional[int] = None,  # Sliding window attention size
-        z_loss_weight: float = 1e-5,  # Z-loss regularization coefficient
-        tie_word_embeddings: bool = True,  # Table 1: Tied embedding weights for <= 4B models
-        # MoE Specific Parameters (Table 2 & Section 2)
-        is_moe: bool = False,  # Toggle True for 500M active MoE variant
-        num_experts: int = 128,  # Table 2: 128 fine-grained total experts
-        num_experts_per_tok: int = 8,  # Table 2: Top-8 activated experts per token
-        moe_intermediate_size: int = 352,  # Fine-grained expert dimension (8 * 352 = 2816 active)
-        router_aux_loss_coef: float = 0.01,  # Global-batch load balancing loss coefficient
+        vocab_size: int = 100278,               # Vocabulary size set to 100278 as required
+        hidden_size: int = 1024,                # Hidden dimension size (500M budget target: 16 heads * 64)
+        intermediate_size: int = 3584,          # Dense SwiGLU intermediate size (3.5x hidden_size)
+        num_hidden_layers: int = 28,            # 28 Transformer layers (matching Qwen3 Table 1 for sub-1B)
+        num_attention_heads: int = 16,          # 16 Query attention heads (head_dim = 64)
+        num_key_value_heads: int = 8,           # Grouped Query Attention (GQA) 8 KV heads (Table 1: 16/8)
+        max_position_embeddings: int = 32768,   # Default context length window (32K for <=1.7B)
+        rope_theta: float = 1000000.0,          # ABF RoPE base frequency
+        rms_norm_eps: float = 1e-6,             # Pre-normalization RMSNorm epsilon
+        use_sliding_window: bool = False,       # SWA toggle
+        sliding_window: Optional[int] = None,   # Sliding window attention size
+        z_loss_weight: float = 1e-5,            # Z-loss regularization coefficient
+        tie_word_embeddings: bool = True,       # Tied embedding weights enabled for <=4B models
+        # MoE Specific Parameters
+        is_moe: bool = False,                   # Switch between Dense and MoE variants
+        num_experts: int = 128,                 # Fine-grained total expert count (Qwen3 MoE standard)
+        num_experts_per_tok: int = 8,           # Top-K activated experts per token
+        moe_intermediate_size: int = 448,       # Fine-grained expert size (8 * 448 = 3584 active)
+        router_aux_loss_coef: float = 0.01,     # Global-batch load balancing loss coefficient
         # Thinking Mode Parameters
-        enable_thinking: bool = True,  # Qwen3 dual-mode dynamic thinking support
-        thinking_budget: Optional[
-            int
-        ] = None,  # Token budget for thinking mode
-        **kwargs,
+        enable_thinking: bool = True,           # Enable dynamic thinking mode
+        thinking_budget: Optional[int] = None,  # Maximum thinking token budget during inference
+        **kwargs
     ):
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
@@ -69,7 +67,7 @@ class Qwen3Config(PretrainedConfig):
         self.router_aux_loss_coef = router_aux_loss_coef
         self.enable_thinking = enable_thinking
         self.thinking_budget = thinking_budget
-
+        
         super().__init__(tie_word_embeddings=tie_word_embeddings, **kwargs)
 
 

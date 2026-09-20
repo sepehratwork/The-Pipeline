@@ -15,27 +15,26 @@ class Nemotron3Config(PretrainedConfig):
     """
     Configuration class for NVIDIA Nemotron 3 family models.
     Supports both MoE Hybrid (LatentMoE) and Dense Hybrid (Dense Mamba-Transformer) architectures.
-    Hyperparameters scaled to a 500 Million Active Parameters budget following 
-    wider-shallower scaling laws and LatentMoE design constraints.
+    Hyperparameters scaled to a 500 Million Active Parameters budget.
     """
     architecture = "nemotron_3"
 
     def __init__(
         self,
-        vocab_size: int = 100278,
-        hidden_size: int = 1536,                 # Scaled for 500M active budget (d_head = 1536/12 = 128)
-        intermediate_size: int = 3072,           # 2 * hidden_size for balanced spectral capacity
-        num_hidden_layers: int = 12,             # Shallower depth (12 layers) to maximize throughput (Bi et al., 2024)
-        num_attention_heads: int = 12,           # 12 heads preserving d_head = 128
-        num_key_value_heads: int = 2,            # GQA with 2 KV heads per Nemotron 3 paper spec
+        vocab_size: int = 100278,               # Fixed per requirement
+        hidden_size: int = 1536,                # Scaled from 2048 -> 1536
+        intermediate_size: int = 3072,          # Preserves 2 * hidden_size ratio
+        num_hidden_layers: int = 16,            # Scaled from 24 -> 16 (Shallower & Wider per scaling laws)
+        num_attention_heads: int = 12,          # Preserves head_dim = 128 (1536 / 12 = 128)
+        num_key_value_heads: int = 2,           # GQA with 2 KV heads per paper spec
         attn_layer_indices: Optional[List[int]] = None,
-        max_position_embeddings: int = 1048576,  # 1M context length support (no RoPE in attention)
-        is_moe: bool = True,                     # MoE Hybrid (LatentMoE)
-        latent_dim: int = 384,                   # Latent dimension for LatentMoE (d/4 = 1536/4 = 384)
-        num_routed_experts: int = 32,            # Total LatentMoE experts (high sparsity)
-        num_active_experts: int = 4,             # Active LatentMoE experts per token
-        use_mtp: bool = True,                    # Multi-Token Prediction layers
-        num_mtp_tokens: int = 2,                 # Predict 2 future draft tokens for speculative decoding
+        max_position_embeddings: int = 1048576, # 1M context length support
+        is_moe: bool = True,                    # Toggle between MoE Hybrid and Dense Hybrid
+        latent_dim: int = 384,                  # Latent dimension for LatentMoE (d / 4 = 1536 / 4 = 384)
+        num_routed_experts: int = 32,           # Total LatentMoE experts
+        num_active_experts: int = 4,            # Active LatentMoE experts per token
+        use_mtp: bool = True,                   # Multi-Token Prediction layers
+        num_mtp_tokens: int = 2,                # Predict 2 future draft tokens
         z_loss_weight: float = 1e-5,
         tie_word_embeddings: bool = True,
         **kwargs
@@ -47,9 +46,9 @@ class Nemotron3Config(PretrainedConfig):
         self.num_attention_heads = num_attention_heads
         self.num_key_value_heads = num_key_value_heads
         
-        # Interleaved layer layout: Sparse attention placed at layers 5 and 11 (1 every 6 layers)
+        # Interleaved layer layout: Attention placed selectively every 8 layers (layers 7, 15)
         if attn_layer_indices is None:
-            self.attn_layer_indices = [5, 11]
+            self.attn_layer_indices = [7, 15]
         else:
             self.attn_layer_indices = attn_layer_indices
 

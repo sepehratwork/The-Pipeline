@@ -12,38 +12,35 @@ class MiniMaxM2Config(PretrainedConfig):
     """
     Configuration class for MiniMax-M2 language model.
     
-    Hyperparameters scaled to ~500 Million Active Parameters (~0.5B):
+    Hyperparameters scaled to ~500 Million Active Parameters:
     - hidden_size: 1536
     - intermediate_size (per fine-grained expert): 384
     - num_hidden_layers: 20
     - num_attention_heads: 12 (head_dim = 128)
-    - num_key_value_heads: 2 (GQA ratio 6:1, matching the original MiniMax-M2 ratio)
+    - num_key_value_heads: 2 (GQA ratio 6:1, matching MiniMax-M2 paper)
     - num_experts: 64 total fine-grained experts
     - num_experts_per_tok: 8 active experts per token
-    - num_shared_experts: 1
-    - shared_expert_intermediate_size: 768 (size = 2 * intermediate_size)
-    - num_mtp_modules: 1 (Multi-Token Prediction draft block)
-    - Active parameters per token: ~494 Million (~0.494B)
-    - Total parameters: ~2.59 Billion
+    - num_shared_experts: 1 (size 768)
+    - Active params per token (excluding embeddings): ~494 Million (~0.50B)
     """
     architecture = "minimax_m2"
 
     def __init__(
         self,
-        vocab_size=100278,
-        hidden_size=1536,
-        intermediate_size=384,            # Per fine-grained expert FFN size (d / 4)
-        num_hidden_layers=20,             # Total decoder layers (balanced depth)
-        num_attention_heads=12,           # Query heads (head_dim = 128, 12 * 128 = 1536)
-        num_key_value_heads=2,            # Key/Value heads (GQA 6:1 matching paper)
+        vocab_size=100278,                # Mandated vocab size
+        hidden_size=1536,                 # Scaled from 2048
+        intermediate_size=384,            # Scaled expert FFN size (d / 4)
+        num_hidden_layers=20,             # Scaled layers (preserving optimal L/d ratio)
+        num_attention_heads=12,           # 12 heads * head_dim 128 = 1536
+        num_key_value_heads=2,            # GQA ratio 6:1 (48:8 in MiniMax-M2 paper)
         num_experts=64,                   # Fine-grained experts total
-        num_experts_per_tok=8,            # Activated experts per token (K = 8)
+        num_experts_per_tok=8,            # Activated experts per token
         num_shared_experts=1,             # Shared experts count
-        shared_expert_intermediate_size=768,  # Shared expert FFN size (d / 2)
+        shared_expert_intermediate_size=768, # Shared expert FFN size (2 * intermediate_size)
         max_position_embeddings=192000,   # MiniMax-M2 native 192K context window
         rope_theta=500000.0,
         rms_norm_eps=1e-6,
-        num_mtp_modules=1,                # Multi-Token Prediction (MTP) depth K
+        num_mtp_modules=1,                # Multi-Token Prediction (MTP) depth K=1
         mtp_loss_factor=0.3,              # MTP loss weight
         tie_word_embeddings=True,
         **kwargs

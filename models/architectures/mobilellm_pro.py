@@ -10,34 +10,32 @@ from ..utils.attention import GroupedQueryAttention
 
 class MobileLLMProConfig(PretrainedConfig):
     """
-    Configuration class for MobileLLM-Pro scaled to 500M Parameters (~503.7M).
+    Configuration class for MobileLLM-Pro scaled to ~500M Parameters (0.5B).
     
-    Ref:
-    - MobileLLM-Pro Technical Report (Meta Reality Labs, 2025)
-    - Scaling Laws for Model Shape & Edge Deployment (Bian et al., 2024; Liu et al., 2024)
-    
-    Scaling Adjustments:
-    - Layers reduced from 30 -> 20 (Shallower to increase edge throughput and mitigate inverse depth scaling)
-    - Hidden dim scaled to 960 with head dim 64 (15 Query heads, 3 KV heads preserving 5:1 GQA)
-    - Intermediate dim scaled to 4608 (maintaining exact 4.8x FFN expansion)
-    - Shared vocab embeddings maintained at 202,048 tokens
-    - Context length (128k) and local-global sliding window (512) preserved
+    Scaled based on:
+    - Scaling Laws (Sun et al., Bian et al., Liu et al.): Preserving optimal depth-to-width
+      ratio R_{D/W} = 24 / 1024 = 30 / 1280 = 0.0234375, optimizing inference throughput.
+    - 24 Transformer layers (divisible by 4 for the 3:1 local-global attention interleaving).
+    - Hidden dim: 1024, FFN dim: 4928 (~4.8x scaling).
+    - 16 Query Heads, 4 KV Heads (GQA with head dimension 64).
+    - Vocab size: 100,278 with shared input/output embeddings.
+    - Context length: 128,000 tokens (128k) with 512 local sliding window.
     """
     architecture = "mobilellm_pro"
 
     def __init__(
         self,
-        vocab_size=202048,
-        hidden_size=960,               # Scaled from 1280 to 960
-        intermediate_size=4608,        # 4.8x hidden_size (4.8 * 960 = 4608)
-        num_hidden_layers=20,          # Reduced from 30 to 20 (5 blocks of 4 local-global layers)
-        num_attention_heads=15,        # 960 / 64 = 15 heads
-        num_key_value_heads=3,         # 15 / 3 = 5:1 GQA ratio (matching 20:4 in 1B)
-        max_position_embeddings=128000,# Preserved 128k context support
-        sliding_window=512,            # Preserved local sliding window
+        vocab_size=100278,              # Fixed as required
+        hidden_size=1024,               # Scaled from 1280 -> 1024 (16 * 64)
+        intermediate_size=4928,         # ~4.8x hidden_size (multiple of 64)
+        num_hidden_layers=24,           # Scaled from 30 -> 24 (preserves R_{D/W} = 0.0234)
+        num_attention_heads=16,         # Scaled from 20 -> 16 (head_dim = 64)
+        num_key_value_heads=4,          # 4 KV heads (GQA ratio 4:1)
+        max_position_embeddings=128000, # Maintained 128k context support
+        sliding_window=512,             # Maintained 512 local sliding window
         rope_theta=500000.0,
         rms_norm_eps=1e-5,
-        tie_word_embeddings=True,       # Embedding sharing (saves ~194M params)
+        tie_word_embeddings=True,       # Embedding weight sharing enabled
         **kwargs
     ):
         self.vocab_size = vocab_size

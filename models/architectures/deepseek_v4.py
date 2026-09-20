@@ -14,38 +14,39 @@ from ..utils.mhc import ManifoldConstrainedHyperConnections
 class DeepSeekV4Config(PretrainedConfig):
     """
     500M Active Parameter Configuration for DeepSeek-V4.
-    Scaled according to DeepSeek-V4 architecture rules and modern MoE scaling laws.
+    Total Active Parameters: ~501.16M (Active Backbone + Tied Embeddings)
+    Total Model Parameters: ~3.24B (64 Routed + 1 Shared Experts)
     """
     architecture = "deepseek_v4"
 
     def __init__(
         self,
-        vocab_size: int = 100278,
-        hidden_size: int = 1024,
-        intermediate_size: int = 1024,
-        num_hidden_layers: int = 16,
-        num_attention_heads: int = 16,
-        num_key_value_heads: int = 2,
+        vocab_size: int = 100278,                 # Fixed as specified
+        hidden_size: int = 1024,                  # Scaled from 512 to 1024 (wider representation)
+        intermediate_size: int = 1280,            # Fine-grained expert FFN dimension
+        num_hidden_layers: int = 12,              # Depth retained at 12 for optimal inference throughput
+        num_attention_heads: int = 16,            # 16 heads * 128 head_dim = 2048 core query dim
+        num_key_value_heads: int = 2,             # Dual KV entries (C^a, C^b) for CSA
         max_position_embeddings: int = 8192,
         rope_theta: float = 500000.0,
-        n_hc: int = 4,
-        t_max: int = 20,
-        compression_rate: int = 4,
-        heavy_compression_rate: int = 128,
-        head_dim: int = 128,
-        attention_topk: int = 128,
-        q_lora_rank: int = 256,
-        indexer_heads: int = 16,
-        indexer_dim: int = 64,
-        num_projection_groups: int = 4,
-        group_intermediate_dim: int = 256,
-        window_size: int = 128,
-        num_routed_experts: int = 64,
-        num_active_experts: int = 6,
-        num_shared_experts: int = 1,
-        hash_routing_layers: int = 3,
-        z_loss_weight: float = 1e-4,
-        mtp_loss_weight: float = 0.3,
+        n_hc: int = 4,                            # mHC residual stream expansion factor (from paper)
+        t_max: int = 20,                          # Sinkhorn-Knopp iterations (from paper)
+        compression_rate: int = 4,                # CSA sequence compression factor m=4 (from paper)
+        heavy_compression_rate: int = 128,        # HCA sequence compression factor m'=128 (from paper)
+        head_dim: int = 128,                      # 64 dims partial RoPE + 64 dims FP8 storage
+        attention_topk: int = 128,                # Top-k compressed KV entries selected by Lightning Indexer
+        q_lora_rank: int = 512,                   # Query down-projection latent dim d_c = d / 2
+        indexer_heads: int = 8,                   # Number of indexer query heads n_h^I
+        indexer_dim: int = 64,                    # Indexer head dimension c^I
+        num_projection_groups: int = 4,           # g = 4 projection groups for core attention output
+        group_intermediate_dim: int = 512,        # d_g = 512 intermediate group dimension
+        window_size: int = 128,                   # Sliding window attention size n_win (from paper)
+        num_routed_experts: int = 64,             # Total routed experts (higher sparsity leverage)
+        num_active_experts: int = 6,              # 6 routed experts activated per token
+        num_shared_experts: int = 1,              # 1 shared expert always activated
+        hash_routing_layers: int = 2,             # Hash routing for initial transformer blocks
+        z_loss_weight: float = 1e-5,
+        mtp_loss_weight: float = 0.3,             # Multi-Token Prediction loss weight (from paper)
         use_yarn: bool = False,
         original_max_position_embeddings: int = 8192,
         tie_word_embeddings: bool = True,

@@ -54,31 +54,31 @@ class KimiK3Config(PretrainedConfig):
     """
     Configuration class for the Kimi K3 Model.
     
-    Configured for ~500 Million Active Parameters using scaling laws and paper specs:
-    - 17 Layers (4 Blocks of 4 layers + 1 final Gated MLA layer = 17 layers: 12 KDA + 5 Gated MLA)
+    Configured for ~500 Million Active Parameters (~2.5B Total) using scaling laws and paper specs:
+    - 21 Layers (5 Blocks of 4 layers + 1 final Gated MLA layer = 21 layers: 15 KDA + 6 Gated MLA)
     - 1M Context Length capability with NoPE (No Position Encoding)
     - Hybrid KDA-MLA Attention (3:1 ratio)
-    - Stable LatentMoE with 0.5x Latent Compression and SiTU-GLU FFN
+    - Stable LatentMoE with 1/16 activation ratio (4 of 64 routed active) and SiTU-GLU
     """
     architecture = "kimi_k3"
 
     def __init__(
         self,
-        vocab_size: int = 160000,
+        vocab_size: int = 100278,
         hidden_size: int = 1024,
-        num_hidden_layers: int = 17,
+        num_hidden_layers: int = 21,
         num_attention_heads: int = 8,
         head_dim: int = 128,
         kda_ratio: int = 3,  # 3 KDA layers to 1 Gated MLA layer
-        latent_dim: int = 512,  # 0.5 * hidden_size (per Table 1)
+        latent_dim: int = 512,  # 0.5 * hidden_size
         num_routed_experts: int = 64,
         num_active_experts: int = 4,
         num_shared_experts: int = 1,
-        moe_intermediate_size: int = 1024,  # or 1152 for exact ~500M active
-        shared_intermediate_size: int = 2048,  # 2 * hidden_size
-        dense_intermediate_size: int = 2816,   # ~8/3 * hidden_size
-        use_moe: bool = True,
-        attn_res_num_blocks: int = 4,  # Aligned with the 4 hybrid blocks
+        moe_intermediate_size: int = 1024,
+        shared_intermediate_size: int = 2048,
+        dense_intermediate_size: int = 2816,
+        use_moe: bool = True,  # True for MoE, False for Dense version
+        attn_res_num_blocks: int = 8,
         max_position_embeddings: int = 1000000,
         rms_norm_eps: float = 1e-6,
         z_loss_weight: float = 1e-5,

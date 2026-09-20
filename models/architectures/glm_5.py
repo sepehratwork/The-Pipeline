@@ -12,50 +12,51 @@ class GLM5Config(PretrainedConfig):
     """
     Configuration class for the GLM-5 model.
     
-    Hyperparameters are scaled according to scaling laws to target 500 Million Active Parameters (~500M active parameters).
-    
-    Theoretical Justification & Scaling Laws:
-    - Shallower & Wider (Bian et al. [558], Liu et al. [559]): Scaled to 12 layers with hidden size 1024 
-      (ratio L/d = 0.0117, matching GLM-5's optimal R_{D/W} ~ 0.0127) to maximize inference throughput and
-      prevent layer redundancy caused by inverse depth scaling.
-    - MoE Efficiency Leverage (Tian et al. [564], Abnar et al. [565]): Retains 8 active routed experts + 1 shared expert 
-      with fine expert granularity (intermediate size 896) to maximize capacity under a fixed active FLOP budget.
-      
-    Target Active Parameters Calculation:
-    - Vocab embedding (154,880 x 1,024, tied): ~158.60M
-    - Dense Layers (2 layers @ ~15.53M each): ~31.07M
-    - MoE Layers (10 layers @ ~30.94M active each; 8 active out of 64 routed + 1 shared): ~309.36M
-    - Total Active Parameters = 158.60M + 31.07M + 309.36M = ~499.03M Active Parameters (~500M)
+    Hyperparameters are scaled according to scaling laws to target 500 Million Active Parameters (~500.09M active parameters).
+    Target parameters calculation:
+    - Vocab embedding (100,278 x 1,024, tied): ~102.68M
+    - Dense Layers (2 layers):
+        * Attention (MLA): ~6.03M per layer
+        * Dense MLP (SwiGLU, 3 x 1024 x 2432): ~7.47M per layer
+        * Total per Dense Layer: ~13.50M
+        * 2 Dense Layers: ~27.00M
+    - MoE Layers (12 layers, 8 active experts out of 64 routed + 1 shared expert = 9 active experts):
+        * Attention (MLA): ~6.03M per layer
+        * Router (1024 x 64): ~0.07M per layer
+        * Active MoE MLP (9 active x 3 x 1024 x 896): ~24.77M per layer
+        * Total per MoE Layer: ~30.87M
+        * 12 MoE Layers: ~370.41M
+    - Total Active Parameters = 102.68M + 27.00M + 370.41M = ~500.09M Active Parameters (~500 Million)
     """
     architecture = "glm_5"
 
     def __init__(
         self,
-        vocab_size: int = 154880,
-        hidden_size: int = 1024,              # Hidden dimension scaled for 500M active target
-        intermediate_size: int = 3072,        # SwiGLU intermediate size for dense layers (3 * hidden_size)
-        moe_intermediate_size: int = 896,     # Per-expert intermediate size (7 * 128)
-        num_hidden_layers: int = 12,          # Total transformer layers (Shallower & wider architecture)
-        num_dense_layers: int = 2,            # Dense layers at the bottom of the stack
-        num_attention_heads: int = 16,        # Number of MLA attention heads
-        qk_head_dim: int = 128,               # QK head dimension
-        v_head_dim: int = 128,                # V head dimension
-        rope_head_dim: int = 64,              # Decoupled RoPE head dimension
-        q_lora_rank: int = 512,               # Low-rank compression for query
-        kv_lora_rank: int = 256,              # Low-rank compression for key-value
-        num_routed_experts: int = 64,         # Total routed experts (maintains high capacity & sparsity)
-        num_active_experts: int = 8,          # Active routed experts per token
-        num_shared_experts: int = 1,          # Number of shared experts
-        hash_routing_layers: int = 0,         # Layers utilizing deterministic hash routing
-        max_position_embeddings: int = 202752,# Extended max position embeddings (GLM-5 SFT max)
-        rope_theta: float = 1000000.0,        # Base RoPE theta
-        use_yarn: bool = True,                # YaRN RoPE extension
+        vocab_size: int = 100278,              # Enforced vocab size
+        hidden_size: int = 1024,               # Scaled hidden dimension for 500M active target
+        intermediate_size: int = 2432,         # SwiGLU intermediate size for dense layers (~2.375x hidden)
+        moe_intermediate_size: int = 896,      # Per-expert intermediate size (7/8x hidden, 128-byte aligned)
+        num_hidden_layers: int = 14,           # Total transformer layers (shallower for inference throughput)
+        num_dense_layers: int = 2,             # Dense warmup layers at the bottom of the stack
+        num_attention_heads: int = 16,         # Number of MLA attention heads
+        qk_head_dim: int = 128,                # QK head dimension
+        v_head_dim: int = 128,                 # V head dimension
+        rope_head_dim: int = 64,               # Decoupled RoPE head dimension
+        q_lora_rank: int = 512,                # Low-rank compression for query (d / 2)
+        kv_lora_rank: int = 256,               # Low-rank compression for key-value (d / 4)
+        num_routed_experts: int = 64,          # Total routed experts
+        num_active_experts: int = 8,           # Active routed experts per token
+        num_shared_experts: int = 1,           # Number of shared experts
+        hash_routing_layers: int = 0,          # Layers utilizing deterministic hash routing
+        max_position_embeddings: int = 202752, # Extended max position embeddings (GLM-5 SFT max)
+        rope_theta: float = 1000000.0,         # Base RoPE theta
+        use_yarn: bool = True,                 # YaRN RoPE extension
         original_max_position_embeddings: int = 8192,
-        z_loss_weight: float = 1e-5,          # Logit Z-loss weight
-        use_dsa: bool = False,                # DeepSeek Sparse Attention flag
-        topk_indexer: int = 64,               # Top-k sparse indexer for DSA
+        z_loss_weight: float = 1e-5,           # Logit Z-loss weight
+        use_dsa: bool = False,                 # DeepSeek Sparse Attention flag
+        topk_indexer: int = 64,                # Top-k sparse indexer for DSA
         rms_norm_eps: float = 1e-6,
-        tie_word_embeddings: bool = True,     # Tied embeddings flag
+        tie_word_embeddings: bool = True,      # Tied embeddings flag
         **kwargs
     ):
         self.vocab_size = vocab_size
