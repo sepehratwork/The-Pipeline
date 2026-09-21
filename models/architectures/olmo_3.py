@@ -9,22 +9,22 @@ from ..utils.attention import GroupedQueryAttention
 
 
 class OLMo3Config(PretrainedConfig):
-    architecture = "olmo_3"
+    architecture = "olmo_3_test"
     def __init__(
         self, 
         vocab_size=100278,               # Strictly set as required
-        hidden_size=1536,                # Scaled for ~500M budget following Wider & Shallower principle (12 * 128)
+        hidden_size=1536,                # Width kept at 1536 following the Wider & Shallower principle
         intermediate_size=4096,          # Exact 8/3 * hidden_size (8/3 * 1536 = 4096)
-        num_hidden_layers=16,            # 16 layers (halved from 7B's 32); satisfies the "3 SWA, 1 Full Attention" multiple-of-4 rule
+        num_hidden_layers=8,             # Adjusted to 8 (2 cycles of [3 SWA + 1 Full]) to achieve ~503M total params
         num_attention_heads=12,          # hidden_size // 128 head_dim = 1536 // 128 = 12
-        num_key_value_heads=2,           # GQA enabled (6:1 ratio, matching OLMo 3 32B's 5:1 design)
-        max_position_embeddings=8192,    # OLMo 3 standard pretraining context length
-        sliding_window=4096,             # OLMo 3 standard SWA window size
-        rope_theta=500000.0,             # OLMo 3 standard base frequency
-        z_loss_weight=1e-5,              # OLMo 3 standard z-loss weight
-        use_yarn=False,                  # YaRN disabled for base 8k window (used only in 64k extension)
+        num_key_value_heads=2,           # GQA enabled (6:1 ratio, matching OLMo 3 GQA design)
+        max_position_embeddings=8192,    # OLMo 3 standard context
+        sliding_window=4096,             # OLMo 3 standard SWA
+        rope_theta=500000.0,             # OLMo 3 standard RoPE theta
+        z_loss_weight=1e-5,              # OLMo 3 standard z-loss
+        use_yarn=False,                  # YaRN used only for long-context extension
         original_max_position_embeddings=8192,
-        tie_word_embeddings=True,        # Tied embeddings to allocate sufficient parameter budget to layers
+        tie_word_embeddings=False,       # OLMo 3 default untied embeddings
         **kwargs
     ):
         self.vocab_size = vocab_size
