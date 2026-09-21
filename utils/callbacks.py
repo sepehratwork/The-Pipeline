@@ -164,7 +164,7 @@ class GradientMetricsCallback(TrainerCallback):
         self.num_bins = num_bins
 
         # Multiprocessing configuration
-        self.num_workers = max(1, os.cpu_count() or 1)
+        self.num_workers = max(1, os.cpu_count()-1 or 1)
         self._pool = None
 
         self.steps, self.variances, self.entropies, self.means, self.losses = [], [], [], [], []
