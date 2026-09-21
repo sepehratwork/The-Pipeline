@@ -98,7 +98,15 @@ def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path, hf_user
         trainer = Trainer(
             model=model, args=args, train_dataset=ds,
             processing_class=tokenizer,  # Standard HF Trainer tokenizer binding
-            callbacks=[GradientMetricsCallback(model=model, log_file=os.path.join(stage4_dir, "training_log.jsonl"), plot_dir=stage4_dir)]
+            callbacks=[
+                GradientMetricsCallback(
+                    model=model, 
+                    log_file=os.path.join(stage4_dir, "training_log.jsonl"), 
+                    plot_dir=stage4_dir,
+                    # confidence_mode="top1",
+                    # entropy_mode="distribution",
+                    )
+                ]
         )
 
         # Start Stage Timing
@@ -227,7 +235,15 @@ def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path, hf_user
 
         trainer = DPOTrainer(
             model=model, ref_model=ref_model, args=args, train_dataset=ds, processing_class=tokenizer,
-            callbacks=[GradientMetricsCallback(model=model, log_file=os.path.join(stage5_dir, "training_log.jsonl"), plot_dir=stage5_dir)]
+            callbacks=[
+                GradientMetricsCallback(
+                    model=model, 
+                    log_file=os.path.join(stage5_dir, "training_log.jsonl"), 
+                    plot_dir=stage5_dir,
+                    # confidence_mode="top1",
+                    # entropy_mode="distribution",
+                    )
+                ]
         )
 
         # Start Stage Timing

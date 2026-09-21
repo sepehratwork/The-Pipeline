@@ -100,7 +100,7 @@ def main(hf_token, architecture, hf_username = "SepehrKerachi"):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-            description="Train a language model in the size of 1 billion parameters in different architectures..."
+            description="Train a language model in the size of 500 million parameters in different architectures..."
         )
 
     parser.add_argument(

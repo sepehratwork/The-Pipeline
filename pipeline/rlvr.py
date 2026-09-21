@@ -138,7 +138,6 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
         max_prompt_length, max_completion_length = 2048, 32768
         max_completion_length = int(max_completion_length / (2 ** seq_len_scale_factor))
 
-
         steps_list, variances, entropies, means, losses, flops_list = [], [], [], [], [], []
         tokens_per_sec_list = []
         tokens_per_sec_buffer = []  # Accumulate tokens per sec for averaging across accumulation steps
@@ -147,6 +146,25 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
         learning_rates = []  # Captured Learning Rate List
         cot_lengths_list = []  # Captured Step-Averaged CoT Length List
         cot_lengths_buffer = []  # Accumulate CoT lengths for averaging across accumulation steps
+        
+        # Next-token prediction confidence
+        confidences_list = []
+        confidences_buffer = []
+
+        # Rewards metrics
+        rewards_list = []
+        reward_means = []
+        reward_variances = []
+        reward_entropies = []
+        rewards_buffer = []
+
+        # Advantages metrics
+        advantages_list = []
+        advantage_means = []
+        advantage_variances = []
+        advantage_entropies = []
+        advantages_buffer = []
+
         total_flops = 0
 
         if os.path.exists(log_file):
@@ -165,6 +183,15 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
                         vram_reserved_list.append(data.get('vram_reserved', 0.0))
                         learning_rates.append(data.get('learning_rate', 0.0))
                         cot_lengths_list.append(data.get('cot_length', 0.0))
+                        confidences_list.append(data.get('confidence', 0.0))
+                        rewards_list.append(data.get('reward', 0.0))
+                        reward_means.append(data.get('reward_mean', 0.0))
+                        reward_variances.append(data.get('reward_variance', 0.0))
+                        reward_entropies.append(data.get('reward_entropy', 0.0))
+                        advantages_list.append(data.get('advantage', 0.0))
+                        advantage_means.append(data.get('advantage_mean', 0.0))
+                        advantage_variances.append(data.get('advantage_variance', 0.0))
+                        advantage_entropies.append(data.get('advantage_entropy', 0.0))
                         total_flops = data.get('flops', 0)
 
         # Set training mode first
@@ -233,6 +260,9 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
             rewards = torch.tensor(rewards, dtype=dtype, device=device)
             advantages = (rewards - rewards.mean()) / (rewards.std() + 1e-8)
 
+            rewards_buffer.extend(rewards.detach().float().cpu().tolist())
+            advantages_buffer.extend(advantages.detach().float().cpu().tolist())
+
             full_ids = torch.cat([input_ids, completions], dim=1)
             full_mask = torch.cat([attention_mask, (completions != tokenizer.pad_token_id).long()], dim=1)
 
@@ -268,6 +298,12 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
                 )
 
                 comp_mask = (completions != tokenizer.pad_token_id).float()
+
+                # Calculate model confidence for predicting next token
+                with torch.no_grad():
+                    token_probs = torch.exp(policy_token_logprobs.detach())
+                    step_confidence = ((token_probs * comp_mask).sum() / (comp_mask.sum() + 1e-8)).item()
+                confidences_buffer.append(step_confidence)
 
                 loss_kwargs = {}
                 sig = inspect.signature(rl_algo.compute_loss)
@@ -348,6 +384,37 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
                 avg_cot_len = sum(cot_lengths_buffer) / len(cot_lengths_buffer) if cot_lengths_buffer else 0.0
                 cot_lengths_buffer = []
 
+                avg_confidence = sum(confidences_buffer) / len(confidences_buffer) if confidences_buffer else 0.0
+                confidences_buffer = []
+
+                # Compute Reward Statistics
+                if rewards_buffer:
+                    r_tensor = torch.tensor(rewards_buffer, dtype=torch.float32)
+                    r_mean = r_tensor.mean().item()
+                    r_var = torch.var(r_tensor, unbiased=False).item()
+                    abs_r = r_tensor.abs()
+                    sum_abs_r = abs_r.sum().item() + 1e-8
+                    prob_r = abs_r / sum_abs_r
+                    prob_r = prob_r[prob_r > 0]
+                    r_entropy = -torch.sum(prob_r * torch.log(prob_r)).item() if prob_r.numel() > 0 else 0.0
+                else:
+                    r_mean, r_var, r_entropy = 0.0, 0.0, 0.0
+                rewards_buffer = []
+
+                # Compute Advantage Statistics
+                if advantages_buffer:
+                    adv_tensor = torch.tensor(advantages_buffer, dtype=torch.float32)
+                    adv_mean = adv_tensor.mean().item()
+                    adv_var = torch.var(adv_tensor, unbiased=False).item()
+                    abs_adv = adv_tensor.abs()
+                    sum_abs_adv = abs_adv.sum().item() + 1e-8
+                    prob_adv = abs_adv / sum_abs_adv
+                    prob_adv = prob_adv[prob_adv > 0]
+                    adv_entropy = -torch.sum(prob_adv * torch.log(prob_adv)).item() if prob_adv.numel() > 0 else 0.0
+                else:
+                    adv_mean, adv_var, adv_entropy = 0.0, 0.0, 0.0
+                advantages_buffer = []
+
                 vram_allocated = torch.cuda.max_memory_allocated() / (1024 ** 3) if torch.cuda.is_available() else 0.0
                 vram_reserved = torch.cuda.max_memory_reserved() / (1024 ** 3) if torch.cuda.is_available() else 0.0
                 if torch.cuda.is_available():
@@ -357,6 +424,8 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
                     "loss": f"{loss_val:.4f}",
                     "tok/s": f"{avg_tokens_per_sec:.1f}",
                     "cot": f"{avg_cot_len:.0f}tok",
+                    "conf": f"{avg_confidence:.3f}",
+                    "rew": f"{r_mean:.2f}",
                     "vram": f"{vram_allocated:.2f}GB",
                     "lr": f"{lr:.1e}"
                 })
@@ -364,7 +433,8 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
                 tqdm.write(
                     f"[{rl_algo_name.upper()}] Step {step:02d} | "
                     f"Loss: {loss_val:.6f} | Var: {var:.4e} | Ent: {entropy:.4f} | "
-                    f"Speed: {avg_tokens_per_sec:.1f} tok/s | CoT: {avg_cot_len:.1f} tok | VRAM: {vram_allocated:.2f}GB"
+                    f"Speed: {avg_tokens_per_sec:.1f} tok/s | CoT: {avg_cot_len:.1f} tok | "
+                    f"Conf: {avg_confidence:.4f} | Rew: {r_mean:.4f} | Adv: {adv_mean:.4f} | VRAM: {vram_allocated:.2f}GB"
                 )
 
                 steps_list.append(step)
@@ -378,6 +448,15 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
                 vram_reserved_list.append(vram_reserved)
                 learning_rates.append(lr)
                 cot_lengths_list.append(avg_cot_len)
+                confidences_list.append(avg_confidence)
+                rewards_list.append(r_mean)
+                reward_means.append(r_mean)
+                reward_variances.append(r_var)
+                reward_entropies.append(r_entropy)
+                advantages_list.append(adv_mean)
+                advantage_means.append(adv_mean)
+                advantage_variances.append(adv_var)
+                advantage_entropies.append(adv_entropy)
 
                 with open(log_file, 'a') as f:
                     f.write(json.dumps({
@@ -391,16 +470,40 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
                         'vram_allocated': vram_allocated,
                         'vram_reserved': vram_reserved,
                         'learning_rate': lr,
-                        'cot_length': avg_cot_len
+                        'cot_length': avg_cot_len,
+                        'confidence': avg_confidence,
+                        'reward': r_mean,
+                        'reward_mean': r_mean,
+                        'reward_variance': r_var,
+                        'reward_entropy': r_entropy,
+                        'advantage': adv_mean,
+                        'advantage_mean': adv_mean,
+                        'advantage_variance': adv_var,
+                        'advantage_entropy': adv_entropy
                     }) + '\n')
 
-                plt.figure(figsize=(45, 5))
-                for i, (data, title, color) in enumerate(zip(
-                    [variances, entropies, means, losses, flops_list, tokens_per_sec_list, vram_allocated_list, learning_rates, cot_lengths_list],
-                    ['Gradient Variance', 'Gradient Entropy', 'Gradient Mean', 'Training Loss', 'Cumulative FLOPs', 'Inference Tokens/sec', 'Peak VRAM (GB)', 'Learning Rate', 'CoT Length (Tokens)'],
-                    ['blue', 'green', 'orange', 'red', 'purple', 'brown', 'magenta', 'cyan', 'olive']
-                )):
-                    plt.subplot(1, 9, i+1)
+                plot_data = [
+                    variances, entropies, means, losses, flops_list, 
+                    tokens_per_sec_list, vram_allocated_list, learning_rates, cot_lengths_list,
+                    confidences_list, rewards_list, reward_means, reward_variances, reward_entropies,
+                    advantages_list, advantage_means, advantage_variances, advantage_entropies
+                ]
+                plot_titles = [
+                    'Gradient Variance', 'Gradient Entropy', 'Gradient Mean', 'Training Loss', 'Cumulative FLOPs',
+                    'Inference Tokens/sec', 'Peak VRAM (GB)', 'Learning Rate', 'CoT Length (Tokens)',
+                    'Model Confidence', 'Reward', 'Reward Mean', 'Reward Variance', 'Reward Entropy',
+                    'Advantage', 'Advantage Mean', 'Advantage Variance', 'Advantage Entropy'
+                ]
+                plot_colors = [
+                    'blue', 'green', 'orange', 'red', 'purple', 
+                    'brown', 'magenta', 'cyan', 'olive',
+                    'teal', 'gold', 'darkorange', 'salmon', 'crimson',
+                    'deepskyblue', 'steelblue', 'navy', 'indigo'
+                ]
+
+                plt.figure(figsize=(5 * len(plot_data), 5))
+                for i, (data, title, color) in enumerate(zip(plot_data, plot_titles, plot_colors)):
+                    plt.subplot(1, len(plot_data), i+1)
                     plt.plot(steps_list, data, color=color)
                     if title == 'Peak VRAM (GB)' and len(vram_reserved_list) > 0:
                         plt.plot(steps_list, vram_reserved_list, color='purple', linestyle='--', label='Reserved')
