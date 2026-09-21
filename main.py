@@ -64,7 +64,7 @@ def main(hf_token, architecture, hf_username = "SepehrKerachi"):
 
     print(f"✓ Tokenizer ready. Vocab size: {len(tokenizer):,} | Pad Token ID: {tokenizer.pad_token_id} | EOS Token ID: {tokenizer.eos_token_id}\n")
 
-    seq_len_scale_factor = 5
+    seq_len_scale_factor = 6
 
     # ==========================================
     # Pre-training Stages & OLMES Evaluation
