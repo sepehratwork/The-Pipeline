@@ -3,8 +3,72 @@ import json
 import time
 import math
 import torch
+import torch.multiprocessing as mp
 import matplotlib.pyplot as plt
 from transformers import TrainerCallback
+
+
+def _init_worker():
+    """Worker process initialization: disable GPU access and prevent CPU thread oversubscription."""
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""
+    torch.set_num_threads(1)
+
+
+def _chunk_tensors(tensors, num_chunks):
+    """Greedily partition tensors across workers to balance total element count."""
+    chunks = [[] for _ in range(num_chunks)]
+    chunk_sizes = [0] * num_chunks
+    for t in sorted(tensors, key=lambda x: x.numel(), reverse=True):
+        min_idx = chunk_sizes.index(min(chunk_sizes))
+        chunks[min_idx].append(t)
+        chunk_sizes[min_idx] += t.numel()
+    return [c for c in chunks if len(c) > 0]
+
+
+def _worker_first_pass(args):
+    """
+    CPU-only worker task:
+    Computes count, sum, sum of squares, min, max, and coordinate entropy terms.
+    """
+    tensors, entropy_mode = args
+    total_elements = 0
+    sum_grads = 0.0
+    sum_sq_grads = 0.0
+    min_val = float('inf')
+    max_val = float('-inf')
+    total_abs = 0.0
+    sum_x_ln_x = 0.0
+
+    for g in tensors:
+        g_f = g.float()
+        n = g_f.numel()
+        if n == 0:
+            continue
+        total_elements += n
+        sum_grads += g_f.sum(dtype=torch.float64).item()
+        sum_sq_grads += g_f.pow(2).sum(dtype=torch.float64).item()
+        min_val = min(min_val, g_f.min().item())
+        max_val = max(max_val, g_f.max().item())
+
+        if entropy_mode != "distribution":
+            g_abs = g_f.abs()
+            total_abs += g_abs.sum(dtype=torch.float64).item()
+            g_pos = g_abs[g_abs > 0]
+            if g_pos.numel() > 0:
+                sum_x_ln_x += (g_pos * torch.log(g_pos)).sum(dtype=torch.float64).item()
+
+    return (total_elements, sum_grads, sum_sq_grads, min_val, max_val, total_abs, sum_x_ln_x)
+
+
+def _worker_hist_pass(args):
+    """CPU-only worker task: Computes histogram bins across a gradient chunk."""
+    tensors, num_bins, min_val, max_val = args
+    hist = torch.zeros(num_bins, dtype=torch.float64)
+    for g in tensors:
+        if g.numel() > 0:
+            h = torch.histc(g.float(), bins=num_bins, min=min_val, max=max_val)
+            hist += h.to(torch.float64)
+    return hist
 
 
 class StageTimer:
@@ -80,7 +144,7 @@ class GradientMetricsCallback(TrainerCallback):
     """
     Memory-efficient, zero-allocation gradient metrics callback.
     Tracks gradient mean, variance, Shannon empirical entropy, next-token prediction
-    confidence, LR, loss, and VRAM.
+    confidence, LR, loss, and VRAM using CPU-only multi-processing.
     """
     def __init__(
         self, 
@@ -98,6 +162,10 @@ class GradientMetricsCallback(TrainerCallback):
         self.entropy_mode = entropy_mode      # "distribution" or "coordinate"
         self.confidence_mode = confidence_mode  # "top1" (argmax token) or "target" (ground-truth label)
         self.num_bins = num_bins
+
+        # Multiprocessing configuration
+        self.num_workers = max(1, os.cpu_count() or 1)
+        self._pool = None
 
         self.steps, self.variances, self.entropies, self.means, self.losses = [], [], [], [], []
         self.confidences, self.flops = [], []
@@ -138,6 +206,26 @@ class GradientMetricsCallback(TrainerCallback):
         if self.model is not None:
             self._register_hook(self.model)
 
+    def _get_pool(self):
+        """Lazily initialize persistent CPU multiprocessing pool."""
+        if self._pool is None:
+            ctx = mp.get_context("spawn")
+            self._pool = ctx.Pool(processes=self.num_workers, initializer=_init_worker)
+        return self._pool
+
+    def _close_pool(self):
+        """Safely terminate the process pool."""
+        if self._pool is not None:
+            try:
+                self._pool.close()
+                self._pool.join()
+            except Exception:
+                pass
+            self._pool = None
+
+    def __del__(self):
+        self._close_pool()
+
     def _register_hook(self, model):
         """Attaches a forward hook to intercept logits without storing large tensors."""
         if self._hook_handle is not None:
@@ -148,10 +236,8 @@ class GradientMetricsCallback(TrainerCallback):
             self._hook_handle = None
 
         try:
-            # PyTorch >= 2.0 supports with_kwargs=True
             self._hook_handle = model.register_forward_hook(self._forward_hook, with_kwargs=True)
         except TypeError:
-            # PyTorch < 2.0 fallback
             self._hook_handle = model.register_forward_hook(self._forward_hook_legacy)
 
     def _forward_hook(self, module, args, kwargs, output):
@@ -164,7 +250,6 @@ class GradientMetricsCallback(TrainerCallback):
 
     @torch.no_grad()
     def _calculate_confidence(self, module, output, attention_mask=None, labels=None):
-        # Ignore forward passes during evaluation or non-training steps
         if not module.training:
             return
 
@@ -183,7 +268,6 @@ class GradientMetricsCallback(TrainerCallback):
         logits_f = logits.detach().float()
 
         if self.confidence_mode == "target" and labels is not None:
-            # Ground-truth next-token confidence: P(y_t | x_<t)
             shift_logits = logits_f[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
             valid_mask = (shift_labels != -100)
@@ -197,11 +281,9 @@ class GradientMetricsCallback(TrainerCallback):
             else:
                 step_conf = 0.0
         else:
-            # Model Top-1 confidence: max_v P(v | x_<t) = exp(max(z) - logsumexp(z))
-            # Zero tensor allocation over vocabulary dimension
             max_logits = logits_f.max(dim=-1).values
             lse = torch.logsumexp(logits_f, dim=-1)
-            token_conf = torch.exp(max_logits - lse)  # Shape: [batch_size, seq_len]
+            token_conf = torch.exp(max_logits - lse)
 
             if attention_mask is not None and attention_mask.shape == token_conf.shape:
                 mask = attention_mask.bool()
@@ -236,58 +318,64 @@ class GradientMetricsCallback(TrainerCallback):
 
     @torch.no_grad()
     def _calculate_and_store_gradients(self, model):
-        total_elements = 0
-        sum_grads = 0.0
-        sum_sq_grads = 0.0
-        min_val = float('inf')
-        max_val = float('-inf')
-
-        has_grads = False
+        """
+        Multiprocessed CPU-only gradient metric calculation across all CPU cores.
+        Does not use GPU or GPU VRAM for worker processes.
+        """
+        # 1. Extract and transfer gradients to CPU host memory
+        cpu_grads = []
         for p in model.parameters():
             if p.grad is not None:
-                has_grads = True
-                g = p.grad.detach()
-                n = g.numel()
-                total_elements += n
-                sum_grads += g.sum(dtype=torch.float64).item()
-                sum_sq_grads += g.float().pow(2).sum(dtype=torch.float64).item()
-                min_val = min(min_val, g.min().item())
-                max_val = max(max_val, g.max().item())
+                cpu_grads.append(p.grad.detach().to("cpu", non_blocking=True))
 
-        if not has_grads or total_elements == 0:
+        if not cpu_grads:
             return
+
+        # Ensure asynchronous D2H copies have settled before worker access
+        if torch.cuda.is_available():
+            torch.cuda.current_stream().synchronize()
+
+        # 2. Evenly chunk CPU gradients across all system CPU cores
+        chunks = _chunk_tensors(cpu_grads, self.num_workers)
+        if not chunks:
+            return
+
+        pool = self._get_pool()
+
+        # 3. Parallel Pass 1: Element counts, sums, squares, min, max, and coordinate sums
+        first_pass_tasks = [(chunk, self.entropy_mode) for chunk in chunks]
+        results = pool.map(_worker_first_pass, first_pass_tasks)
+
+        total_elements = sum(r[0] for r in results)
+        if total_elements == 0:
+            return
+
+        sum_grads = sum(r[1] for r in results)
+        sum_sq_grads = sum(r[2] for r in results)
+        min_val = min(r[3] for r in results)
+        max_val = max(r[4] for r in results)
+        total_abs = sum(r[5] for r in results)
+        sum_x_ln_x = sum(r[6] for r in results)
 
         mean = sum_grads / total_elements
         var = max(0.0, (sum_sq_grads / total_elements) - (mean ** 2))
 
+        # 4. Entropy calculation
         if self.entropy_mode == "distribution":
             if min_val >= max_val:
                 entropy = 0.0
             else:
-                hist = torch.zeros(self.num_bins, dtype=torch.float64)
-                for p in model.parameters():
-                    if p.grad is not None:
-                        h = torch.histc(p.grad.detach().float(), bins=self.num_bins, min=min_val, max=max_val)
-                        hist += h.cpu().to(torch.float64)
+                # Parallel Pass 2: Histogram binning across worker processes
+                hist_tasks = [(chunk, self.num_bins, min_val, max_val) for chunk in chunks]
+                hist_results = pool.map(_worker_hist_pass, hist_tasks)
+                hist = sum(hist_results)
 
                 probs = hist / total_elements
                 probs = probs[probs > 0]
                 shannon_bits = -(probs * torch.log2(probs)).sum().item()
                 entropy = shannon_bits / math.log2(self.num_bins)
         else:
-            total_abs = 0.0
-            for p in model.parameters():
-                if p.grad is not None:
-                    total_abs += p.grad.detach().abs().sum(dtype=torch.float64).item()
-
             if total_abs > 0:
-                sum_x_ln_x = 0.0
-                for p in model.parameters():
-                    if p.grad is not None:
-                        g_abs = p.grad.detach().abs().float()
-                        g_pos = g_abs[g_abs > 0]
-                        if g_pos.numel() > 0:
-                            sum_x_ln_x += (g_pos * torch.log(g_pos)).sum(dtype=torch.float64).item()
                 raw_h = math.log(total_abs) - (sum_x_ln_x / total_abs)
                 entropy = max(0.0, min(1.0, raw_h / math.log(total_elements)))
             else:
@@ -304,7 +392,6 @@ class GradientMetricsCallback(TrainerCallback):
         var = self._temp_var
         entropy = self._temp_entropy
 
-        # Average next-token confidence across gradient accumulation micro-batches
         if self._accumulated_conf_count > 0:
             confidence = self._accumulated_conf / self._accumulated_conf_count
         else:
@@ -381,13 +468,13 @@ class GradientMetricsCallback(TrainerCallback):
             except Exception:
                 pass
             self._hook_handle = None
+        self._close_pool()
         self._save_plot()
 
     def _save_plot(self):
         if not self.steps:
             return
         try:
-            # 7 distinct subplots to include Token Confidence
             fig, axes = plt.subplots(1, 7, figsize=(35, 4))
             metrics = [
                 (self.losses, 'Training Loss', 'red'),
