@@ -94,15 +94,15 @@ def _run_pretrain_stage(stage_name, architecture, tokenizer, dataset_path, seq_l
             args=args,
             train_dataset=ds,
             processing_class=tokenizer,  # Standard HF Trainer tokenizer binding
-            callbacks=[
-                GradientMetricsCallback(
-                    model=model, 
-                    log_file=os.path.join(output_dir, f"training_log_{stage_name}.jsonl"), 
-                    plot_dir=output_dir,
-                    # confidence_mode="top1",
-                    # entropy_mode="distribution",
-                    )
-                ]
+            # callbacks=[
+            #     GradientMetricsCallback(
+            #         model=model, 
+            #         log_file=os.path.join(output_dir, f"training_log_{stage_name}.jsonl"), 
+            #         plot_dir=output_dir,
+            #         # confidence_mode="top1",
+            #         # entropy_mode="distribution",
+            #         )
+            #     ]
         )
         
         # Start Stage Timing
