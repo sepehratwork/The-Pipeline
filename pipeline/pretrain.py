@@ -158,7 +158,7 @@ def run_stage1_pretraining(architecture, tokenizer, base_dir, seq_len_scale_fact
         os.path.join(base_dir, "Stage1"),
         {"max_position_embeddings": 8192, "use_yarn": False},
         {
-            # "max_steps": 23842,
+            # "max_steps": int(23842/2**seq_len_scale_factor),
             "max_steps": 6,
             "per_device_train_batch_size": 1,
             "gradient_accumulation_steps": 512,
@@ -178,7 +178,7 @@ def run_stage2_midtraining(architecture, tokenizer, base_dir, stage1_model_path,
         os.path.join(base_dir, "Stage2"),
         {"max_position_embeddings": 8192, "use_yarn": False},
         {
-            # "max_steps": 47684,
+            # "max_steps": int(47684/2**seq_len_scale_factor),
             "max_steps": 6,
             "per_device_train_batch_size": 1,
             "gradient_accumulation_steps": 256,
@@ -199,7 +199,7 @@ def run_stage3_long_context(architecture, tokenizer, base_dir, stage2_model_path
         os.path.join(base_dir, "Stage3"),
         {"max_position_embeddings": 65536, "use_yarn": True},
         {
-            # "max_steps": 11921,
+            # "max_steps": int(11921/2**seq_len_scale_factor),
             "max_steps": 6,
             "per_device_train_batch_size": 1,
             "gradient_accumulation_steps": 64,
