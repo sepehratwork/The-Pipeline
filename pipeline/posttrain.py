@@ -86,7 +86,7 @@ def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path, hf_user
             max_steps=2,
             save_total_limit=2, 
             output_dir=stage4_dir, per_device_train_batch_size=1,
-            gradient_accumulation_steps=32, learning_rate=5.0e-5, logging_steps=10, save_steps=50,
+            gradient_accumulation_steps=32, learning_rate=5.0e-5, logging_steps=10, save_steps=10,
             report_to="none", bf16=torch.cuda.is_bf16_supported(), fp16=not torch.cuda.is_bf16_supported(),
             gradient_checkpointing=True,
             gradient_checkpointing_kwargs={"use_reentrant": False},
@@ -103,8 +103,8 @@ def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path, hf_user
                     model=model, 
                     log_file=os.path.join(stage4_dir, "training_log.jsonl"), 
                     plot_dir=stage4_dir,
-                    # confidence_mode="top1",
-                    # entropy_mode="distribution",
+                    confidence_mode="top1",
+                    entropy_mode="distribution",
                     )
                 ]
         )
@@ -223,7 +223,7 @@ def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path, hf_user
             output_dir=stage5_dir, per_device_train_batch_size=1,
             max_grad_norm=1.0,
             gradient_accumulation_steps=128, learning_rate=8.0e-8, lr_scheduler_type="linear", warmup_steps=0.1,
-            logging_steps=10, save_steps=50, report_to="none", bf16=torch.cuda.is_bf16_supported(),
+            logging_steps=10, save_steps=10, report_to="none", bf16=torch.cuda.is_bf16_supported(),
             fp16=not torch.cuda.is_bf16_supported(), 
             gradient_checkpointing=True, 
             gradient_checkpointing_kwargs={"use_reentrant": False},
@@ -240,8 +240,8 @@ def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path, hf_user
                     model=model, 
                     log_file=os.path.join(stage5_dir, "training_log.jsonl"), 
                     plot_dir=stage5_dir,
-                    # confidence_mode="top1",
-                    # entropy_mode="distribution",
+                    confidence_mode="top1",
+                    entropy_mode="distribution",
                     )
                 ]
         )

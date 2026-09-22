@@ -158,15 +158,15 @@ def run_stage1_pretraining(architecture, tokenizer, base_dir, seq_len_scale_fact
         os.path.join(base_dir, "Stage1"),
         {"max_position_embeddings": 8192, "use_yarn": False},
         {
-            # "max_steps": int(23842/2**seq_len_scale_factor+2),
+            # "max_steps": int(23842/2**(seq_len_scale_factor+2)),
             "max_steps": 2,
             "per_device_train_batch_size": 1,
             "gradient_accumulation_steps": 512,
             "learning_rate": 3.0e-4,
             "lr_scheduler_type": "cosine",
-            "warmup_steps": 2000,
+            "warmup_steps": int(2000/2**(seq_len_scale_factor+2)),
             "logging_steps": 10,
-            "save_steps": 50
+            "save_steps": 10
         },
         seq_len_scale_factor
     )
@@ -186,7 +186,7 @@ def run_stage2_midtraining(architecture, tokenizer, base_dir, stage1_model_path,
             "lr_scheduler_type": "linear",
             "warmup_steps": 0,
             "logging_steps": 10,
-            "save_steps": 50
+            "save_steps": 10
         },
         seq_len_scale_factor,
         resume_model_path=stage1_model_path
@@ -205,9 +205,9 @@ def run_stage3_long_context(architecture, tokenizer, base_dir, stage2_model_path
             "gradient_accumulation_steps": 64,
             "learning_rate": 2.074e-4,
             "lr_scheduler_type": "linear",
-            "warmup_steps": 200,
+            "warmup_steps": int(200/2**(seq_len_scale_factor+2)),
             "logging_steps": 10,
-            "save_steps": 50
+            "save_steps": 10
         },
         seq_len_scale_factor,
         resume_model_path=stage2_model_path
