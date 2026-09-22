@@ -83,7 +83,7 @@ def run_stage4_sft(architecture, tokenizer, base_dir, stage3_model_path, hf_user
 
         args = TrainingArguments(
             # num_train_epochs=2,
-            max_steps=6,
+            max_steps=2,
             save_total_limit=2, 
             output_dir=stage4_dir, per_device_train_batch_size=1,
             gradient_accumulation_steps=32, learning_rate=5.0e-5, logging_steps=10, save_steps=50,
@@ -218,7 +218,7 @@ def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path, hf_user
 
         args = DPOConfig(
             # num_train_epochs=1,
-            max_steps=6,
+            max_steps=2,
             save_total_limit=2,
             output_dir=stage5_dir, per_device_train_batch_size=1,
             max_grad_norm=1.0,
