@@ -24,6 +24,7 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
     print(f" • Input Preference Model : {stage5_model_path}")
     print(f" • Target RL Algorithms   : {list(RL_ALGO_REGISTRY.keys())}")
     print("=" * width + "\n")
+    del width
 
     stage6_dir = os.path.join(base_dir, "Stage6")
     os.makedirs(stage6_dir, exist_ok=True)
@@ -34,6 +35,7 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
     
     ConfigClass, ModelClass = get_model_classes(architecture)
     config = ConfigClass.from_pretrained(stage5_model_path)
+    del ConfigClass
     dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"⚙️  Execution Device: {device} | Precision: {dtype}")
@@ -41,10 +43,13 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
     # Initialize standard AMP GradScaler if using float16
     use_scaler = (dtype == torch.float16)
     scaler = torch.amp.GradScaler("cuda") if use_scaler else None
+    del use_scaler
 
     # Initialize Cumulative Stage 6 Timer
     output_dir = os.path.dirname(base_dir)
+    del base_dir
     global_timer = StageTimer(output_dir)
+    del output_dir
 
     # Iterate over all available RL algorithms
     for rl_algo_name in RL_ALGO_REGISTRY.keys():
@@ -63,9 +68,12 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
             for fname in ["model.safetensors", "model.safetensors.index.json", "pytorch_model.bin", "pytorch_model.bin.index.json"]
         )
         if is_already_saved:
+            del is_already_saved
             print(f"⏭️  [Skipped] Algorithm {rl_algo_name.upper()} already completed locally at {final_model_path}.")
             save_to_hf_hub(final_model_path, repo_name, hf_username=hf_username)
+            del final_model_path, repo_name, algo_dir
             continue
+        del is_already_saved
 
         # Start Stage Timing for the active algorithm
         stage_key = f"Stage 6: RLVR ({rl_algo_name.upper()})"
@@ -91,13 +99,17 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
                     if os.path.exists(opt_path):
                         optimizer.load_state_dict(torch.load(opt_path))
                         print("✓ Optimizer state successfully restored.")
+                    del opt_path
                     start_step = get_resume_state(log_file) + 1
                     print(f"✓ Resuming training loop at step {start_step}.")
+                    del ckpt_dir
                     break
                 except Exception as e:
                     print(f"⚠️ Failed to load checkpoint {ckpt_dir}: {e}. Deleting and checking previous...")
                     shutil.rmtree(ckpt_dir, ignore_errors=True)
+                    del ckpt_dir, e
             else:
+                del ckpt_dir
                 print(f"🌱 No checkpoint found for {rl_algo_name.upper()}. Starting training from step 0.")
                 model = ModelClass.from_pretrained(
                     stage5_model_path, 
@@ -172,6 +184,7 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
                 for line in f:
                     if line.strip():
                         data = json.loads(line)
+                        del line
                         steps_list.append(data['step'])
                         variances.append(data['variance'])
                         entropies.append(data['entropy'])
@@ -193,6 +206,9 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
                         advantage_variances.append(data.get('advantage_variance', 0.0))
                         advantage_entropies.append(data.get('advantage_entropy', 0.0))
                         total_flops = data.get('flops', 0)
+                        del data
+                    else:
+                        del line
 
         # Set training mode first
         model.train()
@@ -203,15 +219,19 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
         vocab_size = model.config.vocab_size
 
         step_pbar = tqdm(range(start_step, max_steps), desc=f"🚀 RLVR [{rl_algo_name.upper()}]", unit="step", dynamic_ncols=True)
+        del start_step
         for step in step_pbar:
             example = ds[step % len(ds)]
             
             prompt_text = example["prompt_text"]
             ground_truth = example["ground_truth"]
+            del example
 
             inputs = tokenizer(prompt_text, return_tensors="pt", truncation=True, max_length=max_prompt_length).to(device)
+            del prompt_text
             input_ids = inputs.input_ids.repeat(group_size, 1)
             attention_mask = inputs.attention_mask.repeat(group_size, 1)
+            del inputs
 
             model.eval()
             model.config.use_cache = True
@@ -221,10 +241,13 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
                 with torch.amp.autocast(device_type="cuda", dtype=dtype):
                     completions = generate_completions(model, input_ids, attention_mask, max_completion_length, tokenizer.pad_token_id, tokenizer.eos_token_id)
             gen_duration = time.time() - start_gen_time
+            del start_gen_time
             
             non_pad_tokens = (completions != tokenizer.pad_token_id).sum().item()
             tokens_per_sec = non_pad_tokens / gen_duration if gen_duration > 0 else 0.0
+            del non_pad_tokens, gen_duration
             tokens_per_sec_buffer.append(tokens_per_sec)
+            del tokens_per_sec
 
             model.train()
             model.config.use_cache = False
@@ -241,30 +264,41 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
                     end_idx = comp.find("</think>", start_idx)
                     if end_idx != -1:
                         cot_text = comp[start_idx:end_idx]
+                        del start_idx, end_idx
                         cot_len = len(tokenizer.encode(cot_text, add_special_tokens=False))
+                        del cot_text
                     else:
+                        del start_idx, end_idx
                         cot_len = 0
                 else:
                     cot_len = 0
                 step_cot_lengths.append(cot_len)
+                del comp, cot_len
             
             avg_cot_step = sum(step_cot_lengths) / len(step_cot_lengths) if step_cot_lengths else 0.0
+            del step_cot_lengths
             cot_lengths_buffer.append(avg_cot_step)
+            del avg_cot_step
 
             rewards = []
             for comp in decoded_completions:
                 reward = 0.5 if "<think>" in comp and "</think>" in comp else 0.0
                 if ground_truth and str(ground_truth).lower() in comp.lower(): reward += 1.0
                 rewards.append(reward)
+                del comp, reward
+            del ground_truth, decoded_completions
 
             rewards = torch.tensor(rewards, dtype=dtype, device=device)
             advantages = (rewards - rewards.mean()) / (rewards.std() + 1e-8)
 
             rewards_buffer.extend(rewards.detach().float().cpu().tolist())
+            del rewards
             advantages_buffer.extend(advantages.detach().float().cpu().tolist())
 
             full_ids = torch.cat([input_ids, completions], dim=1)
+            del input_ids
             full_mask = torch.cat([attention_mask, (completions != tokenizer.pad_token_id).long()], dim=1)
+            del attention_mask
 
             safe_completions = torch.clamp(completions, min=0, max=vocab_size - 1)
 
@@ -289,28 +323,34 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
             # 2. Compute policy token logprobs
             with torch.amp.autocast(device_type="cuda", dtype=dtype):
                 policy_outputs = model(input_ids=full_ids, attention_mask=full_mask)
+                del full_mask
                 policy_logits = policy_outputs.logits[:, prompt_len-1:-1, :].float()
                 
-                del policy_outputs
+                del policy_outputs, prompt_len
                 
                 policy_token_logprobs = -F.cross_entropy(
                     policy_logits.transpose(1, 2), 
                     safe_completions, 
                     reduction="none"
                 )
+                del policy_logits, safe_completions
 
                 comp_mask = (completions != tokenizer.pad_token_id).float()
+                del completions
 
                 # Calculate model confidence for predicting next token
                 with torch.no_grad():
                     token_probs = torch.exp(policy_token_logprobs.detach())
                     step_confidence = ((token_probs * comp_mask).sum() / (comp_mask.sum() + 1e-8)).item()
+                    del token_probs
                 confidences_buffer.append(step_confidence)
+                del step_confidence
 
                 loss_kwargs = {}
                 sig = inspect.signature(rl_algo.compute_loss)
                 if "old_logprobs" in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
                     loss_kwargs["old_logprobs"] = policy_token_logprobs.detach()
+                del sig
 
                 loss = rl_algo.compute_loss(
                     policy_token_logprobs, 
@@ -319,16 +359,15 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
                     comp_mask, 
                     **loss_kwargs
                 ) / gradient_accumulation_steps
+                del policy_token_logprobs, ref_token_logprobs, advantages, comp_mask, loss_kwargs
             
             loss_val = loss.item() * gradient_accumulation_steps
             
             N, P = full_ids.size(1) * group_size, sum(p.numel() for p in model.parameters())
+            del full_ids
             total_flops += 8 * N * P + (2 * max_completion_length * group_size * P)
+            del N, P
 
-            del policy_logits, policy_token_logprobs
-            del ref_token_logprobs, advantages, comp_mask
-            del full_ids, full_mask, inputs, input_ids, attention_mask, completions, decoded_completions, rewards, safe_completions
-            
             gc.collect()
             torch.cuda.empty_cache()
 
@@ -346,6 +385,7 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
                 grads = [p.grad.view(-1).float() for p in model.parameters() if p.grad is not None]
                 if grads:
                     all_grads = torch.cat(grads)
+                    del grads
                     total_elements = all_grads.numel()
                     
                     if total_elements > 0:
@@ -353,16 +393,24 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
                         sum_sq_grads = (all_grads ** 2).sum().item()
                         
                         mean = sum_grads / total_elements
+                        del sum_grads
                         var = (sum_sq_grads / total_elements) - (mean ** 2)
+                        del sum_sq_grads
                         
                         abs_grads = all_grads.abs()
+                        del all_grads
                         sum_abs_grads = abs_grads.sum().item() + 1e-8
                         prob = abs_grads / sum_abs_grads
+                        del abs_grads, sum_abs_grads
                         prob = prob[prob > 0]
                         entropy = -torch.sum(prob * torch.log(prob)).item()
+                        del prob
                     else:
+                        del all_grads
                         mean, var, entropy = 0.0, 0.0, 0.0
+                    del total_elements
                 else:
+                    del grads
                     mean, var, entropy = 0.0, 0.0, 0.0
 
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -376,6 +424,7 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
                 lr = 0.0
                 for param_group in optimizer.param_groups:
                     lr = param_group.get('lr', 0.0)
+                    del param_group
                     break
 
                 optimizer.zero_grad(set_to_none=True)
@@ -395,10 +444,13 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
                     r_mean = r_tensor.mean().item()
                     r_var = torch.var(r_tensor, unbiased=False).item()
                     abs_r = r_tensor.abs()
+                    del r_tensor
                     sum_abs_r = abs_r.sum().item() + 1e-8
                     prob_r = abs_r / sum_abs_r
+                    del abs_r, sum_abs_r
                     prob_r = prob_r[prob_r > 0]
                     r_entropy = -torch.sum(prob_r * torch.log(prob_r)).item() if prob_r.numel() > 0 else 0.0
+                    del prob_r
                 else:
                     r_mean, r_var, r_entropy = 0.0, 0.0, 0.0
                 rewards_buffer = []
@@ -409,10 +461,13 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
                     adv_mean = adv_tensor.mean().item()
                     adv_var = torch.var(adv_tensor, unbiased=False).item()
                     abs_adv = adv_tensor.abs()
+                    del adv_tensor
                     sum_abs_adv = abs_adv.sum().item() + 1e-8
                     prob_adv = abs_adv / sum_abs_adv
+                    del abs_adv, sum_abs_adv
                     prob_adv = prob_adv[prob_adv > 0]
                     adv_entropy = -torch.sum(prob_adv * torch.log(prob_adv)).item() if prob_adv.numel() > 0 else 0.0
+                    del prob_adv
                 else:
                     adv_mean, adv_var, adv_entropy = 0.0, 0.0, 0.0
                 advantages_buffer = []
@@ -483,6 +538,8 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
                         'advantage_variance': adv_var,
                         'advantage_entropy': adv_entropy
                     }) + '\n')
+                del var, entropy, mean, loss_val, avg_tokens_per_sec, vram_allocated, vram_reserved
+                del lr, avg_cot_len, avg_confidence, r_mean, r_var, r_entropy, adv_mean, adv_var, adv_entropy
 
                 plot_data = [
                     variances, entropies, means, losses, flops_list, 
@@ -512,6 +569,8 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
                         plt.legend()
                     plt.title(title)
                     plt.xlabel('Steps')
+                    del i, data, title, color
+                del plot_data, plot_titles, plot_colors
                 plt.tight_layout()
                 plt.savefig(os.path.join(algo_dir, 'training_metrics.png'))
                 plt.close()
@@ -533,8 +592,25 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
                     model.generation_config.save_pretrained(ckpt_path)
 
                 torch.save(optimizer.state_dict(), os.path.join(ckpt_path, "optimizer.pt"))
+                del ckpt_path
                 
                 cleanup_checkpoints(algo_dir, keep=2)
+            else:
+                del loss_val
+
+        del step_pbar
+        if 'step' in locals():
+            del step
+        del max_steps, group_size, gradient_accumulation_steps
+        del max_prompt_length, max_completion_length
+        del steps_list, variances, entropies, means, losses, flops_list
+        del tokens_per_sec_list, tokens_per_sec_buffer
+        del vram_allocated_list, vram_reserved_list
+        del learning_rates, cot_lengths_list, cot_lengths_buffer
+        del confidences_list, confidences_buffer
+        del rewards_list, reward_means, reward_variances, reward_entropies, rewards_buffer
+        del advantages_list, advantage_means, advantage_variances, advantage_entropies, advantages_buffer
+        del total_flops, vocab_size, log_file
 
         # Final algorithm save following HF standard serialization
         print(f"💾 Saving final RLVR {rl_algo_name.upper()} model to: {final_model_path}...")
@@ -553,6 +629,7 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
             model.generation_config.save_pretrained(final_model_path)
 
         clear_all_checkpoints(algo_dir)
+        del algo_dir
         print(f"✓ {rl_algo_name.upper()} Training Completed Successfully.")
         
         del model, ref_model, optimizer, rl_algo
@@ -561,8 +638,14 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
 
         print(f"🚀 Publishing RLVR '{repo_name}' to Hugging Face Hub...")
         save_to_hf_hub(final_model_path, repo_name, hf_username=hf_username)
+        del final_model_path, repo_name
 
         global_timer.end_stage(stage_key, start_t)
+        del stage_key, start_t
+
+    del rl_algo_name
+    del architecture, tokenizer, stage5_model_path, hf_username, seq_len_scale_factor
+    del stage6_dir, ds, ModelClass, config, dtype, device, scaler, global_timer
 
     print("\n" + "=" * 75)
     print("✅ Stage 6 Completed Successfully for All Algorithms!".center(75))
