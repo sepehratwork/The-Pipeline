@@ -142,9 +142,9 @@ class StageTimer:
 
 class GradientMetricsCallback(TrainerCallback):
     """
-    Memory-efficient, zero-allocation gradient metrics callback.
-    Tracks gradient mean, variance, Shannon empirical entropy, next-token prediction
-    confidence, LR, loss, and VRAM using CPU-only multi-processing.
+    Zero-GPU-VRAM gradient metrics callback.
+    All metric extractions (gradients, Shannon entropy, logits/confidence calculations)
+    are performed strictly on CPU using multi-processing with 0 bytes of GPU memory allocated.
     """
     def __init__(
         self, 
@@ -159,12 +159,12 @@ class GradientMetricsCallback(TrainerCallback):
         self.optimizer = None
         self.log_file = log_file
         self.plot_dir = plot_dir
-        self.entropy_mode = entropy_mode      # "distribution" or "coordinate"
+        self.entropy_mode = entropy_mode        # "distribution" or "coordinate"
         self.confidence_mode = confidence_mode  # "top1" (argmax token) or "target" (ground-truth label)
         self.num_bins = num_bins
 
         # Multiprocessing configuration
-        self.num_workers = max(1, os.cpu_count()-1 or 1)
+        self.num_workers = max(1, os.cpu_count() - 1 or 1)
         self._pool = None
 
         self.steps, self.variances, self.entropies, self.means, self.losses = [], [], [], [], []
@@ -243,13 +243,22 @@ class GradientMetricsCallback(TrainerCallback):
     def _forward_hook(self, module, args, kwargs, output):
         attn_mask = kwargs.get("attention_mask", None) if isinstance(kwargs, dict) else None
         labels = kwargs.get("labels", None) if isinstance(kwargs, dict) else None
+        
+        # Fallback to positional arguments if not in kwargs
+        if attn_mask is None and len(args) > 1 and isinstance(args[1], torch.Tensor):
+            attn_mask = args[1]
+            
         self._calculate_confidence(module, output, attn_mask, labels)
 
     def _forward_hook_legacy(self, module, args, output):
-        self._calculate_confidence(module, output, None, None)
+        attn_mask = args[1] if len(args) > 1 and isinstance(args[1], torch.Tensor) else None
+        self._calculate_confidence(module, output, attn_mask, None)
 
     @torch.no_grad()
     def _calculate_confidence(self, module, output, attention_mask=None, labels=None):
+        """
+        Calculates prediction confidence strictly on CPU to guarantee 0 GPU VRAM overhead.
+        """
         if not module.training:
             return
 
@@ -265,14 +274,22 @@ class GradientMetricsCallback(TrainerCallback):
         if logits is None:
             return
 
-        logits_f = logits.detach().float()
+        # ------------------------------------------------------------------
+        # ZERO GPU VRAM ENFORCEMENT:
+        # Transfer tensors directly to CPU memory in their native precision.
+        # NEVER call .float() or do slicing on GPU as that causes massive VRAM spikes.
+        # ------------------------------------------------------------------
+        logits_cpu = logits.detach().to("cpu")
+        labels_cpu = labels.detach().to("cpu") if labels is not None else None
+        mask_cpu = attention_mask.detach().to("cpu") if attention_mask is not None else None
 
-        if self.confidence_mode == "target" and labels is not None:
-            shift_logits = logits_f[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous()
+        # Execute all calculations strictly on the host CPU
+        if self.confidence_mode == "target" and labels_cpu is not None:
+            shift_logits = logits_cpu[..., :-1, :].float()
+            shift_labels = labels_cpu[..., 1:]
             valid_mask = (shift_labels != -100)
 
-            if valid_mask.sum() > 0:
+            if valid_mask.any():
                 target_tokens = shift_labels.clamp(min=0).unsqueeze(-1)
                 target_logits = torch.gather(shift_logits, -1, target_tokens).squeeze(-1)
                 lse = torch.logsumexp(shift_logits, dim=-1)
@@ -281,13 +298,14 @@ class GradientMetricsCallback(TrainerCallback):
             else:
                 step_conf = 0.0
         else:
+            logits_f = logits_cpu.float()
             max_logits = logits_f.max(dim=-1).values
             lse = torch.logsumexp(logits_f, dim=-1)
             token_conf = torch.exp(max_logits - lse)
 
-            if attention_mask is not None and attention_mask.shape == token_conf.shape:
-                mask = attention_mask.bool()
-                step_conf = token_conf[mask].mean().item() if mask.sum() > 0 else token_conf.mean().item()
+            if mask_cpu is not None and mask_cpu.shape == token_conf.shape:
+                mask = mask_cpu.bool()
+                step_conf = token_conf[mask].mean().item() if mask.any() else token_conf.mean().item()
             else:
                 step_conf = token_conf.mean().item()
 
@@ -320,9 +338,9 @@ class GradientMetricsCallback(TrainerCallback):
     def _calculate_and_store_gradients(self, model):
         """
         Multiprocessed CPU-only gradient metric calculation across all CPU cores.
-        Does not use GPU or GPU VRAM for worker processes.
+        Guarantees ZERO GPU VRAM usage.
         """
-        # 1. Extract and transfer gradients to CPU host memory
+        # 1. Transfer gradient views directly to host memory without GPU allocations
         cpu_grads = []
         for p in model.parameters():
             if p.grad is not None:
@@ -331,11 +349,11 @@ class GradientMetricsCallback(TrainerCallback):
         if not cpu_grads:
             return
 
-        # Ensure asynchronous D2H copies have settled before worker access
+        # Ensure asynchronous D2H transfers settle before child workers access memory
         if torch.cuda.is_available():
             torch.cuda.current_stream().synchronize()
 
-        # 2. Evenly chunk CPU gradients across all system CPU cores
+        # 2. Greedily chunk CPU gradients across all system CPU cores
         chunks = _chunk_tensors(cpu_grads, self.num_workers)
         if not chunks:
             return
@@ -360,7 +378,7 @@ class GradientMetricsCallback(TrainerCallback):
         mean = sum_grads / total_elements
         var = max(0.0, (sum_sq_grads / total_elements) - (mean ** 2))
 
-        # 4. Entropy calculation
+        # 4. Entropy calculation (pure CPU)
         if self.entropy_mode == "distribution":
             if min_val >= max_val:
                 entropy = 0.0
