@@ -274,13 +274,15 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
                     ref_outputs = ref_model(input_ids=full_ids, attention_mask=full_mask)
                     ref_logits = ref_outputs.logits[:, prompt_len-1:-1, :].float()
                     
+                    del ref_outputs
+
                     ref_token_logprobs = -F.cross_entropy(
                         ref_logits.transpose(1, 2), 
                         safe_completions, 
                         reduction="none"
                     )
 
-            del ref_outputs, ref_logits
+            del ref_logits
             gc.collect()
             torch.cuda.empty_cache()
 
