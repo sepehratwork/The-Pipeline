@@ -170,7 +170,7 @@ def run_stage5_dpo(architecture, tokenizer, base_dir, stage4_model_path, hf_user
     )
 
     seq_length = 16384
-    seq = seq_length / (2 ** seq_len_scale_factor)
+    seq_length = seq_length / (2 ** seq_len_scale_factor)
 
     if not is_already_saved:
         width = 75
