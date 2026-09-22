@@ -158,7 +158,7 @@ def run_stage1_pretraining(architecture, tokenizer, base_dir, seq_len_scale_fact
         os.path.join(base_dir, "Stage1"),
         {"max_position_embeddings": 8192, "use_yarn": False},
         {
-            # "max_steps": int(23842/2**seq_len_scale_factor),
+            # "max_steps": int(23842/2**seq_len_scale_factor+2),
             "max_steps": 2,
             "per_device_train_batch_size": 1,
             "gradient_accumulation_steps": 512,
@@ -178,7 +178,7 @@ def run_stage2_midtraining(architecture, tokenizer, base_dir, stage1_model_path,
         os.path.join(base_dir, "Stage2"),
         {"max_position_embeddings": 8192, "use_yarn": False},
         {
-            # "max_steps": int(47684/2**seq_len_scale_factor),
+            # "max_steps": int(47684/2**seq_len_scale_factor+2),
             "max_steps": 2,
             "per_device_train_batch_size": 1,
             "gradient_accumulation_steps": 256,
@@ -194,12 +194,13 @@ def run_stage2_midtraining(architecture, tokenizer, base_dir, stage1_model_path,
 
 
 def run_stage3_long_context(architecture, tokenizer, base_dir, stage2_model_path, seq_len_scale_factor=1, hf_username=None):
+    seq_len_scale_factor += 1
     stage3_model_path = _run_pretrain_stage(
         "Stage 3: Long-context Extension", architecture, tokenizer, "dolma3_longmino_mix-100B-1125", 65536,
         os.path.join(base_dir, "Stage3"),
         {"max_position_embeddings": 65536, "use_yarn": True},
         {
-            # "max_steps": int(11921/2**seq_len_scale_factor),
+            # "max_steps": int(11921/2**seq_len_scale_factor+2),
             "max_steps": 2,
             "per_device_train_batch_size": 1,
             "gradient_accumulation_steps": 64,
