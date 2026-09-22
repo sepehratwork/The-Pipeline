@@ -1,8 +1,11 @@
 import os
+# Prevent CUDA memory fragmentation before importing torch
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 import json
 import shutil
-import gc          # Added GC to perform final cleans on algorithm switch
-import inspect     # Safely inspect method signatures
+import gc          
+import inspect     
 import torch
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
@@ -14,6 +17,25 @@ from models import get_model_classes
 from rl_algorithms import get_rl_algorithm, RL_ALGO_REGISTRY
 from utils import generate_completions, get_resume_state, get_latest_checkpoint, cleanup_checkpoints, clear_all_checkpoints, save_to_hf_hub
 from utils.callbacks import StageTimer
+
+
+def compute_token_logprobs_chunked(logits, labels, chunk_size=512):
+    """
+    Computes token log probabilities in sequence chunks to prevent
+    large VRAM spikes caused by F.cross_entropy on 3D transposed logits.
+    """
+    seq_len = logits.size(1)
+    if seq_len <= chunk_size:
+        return -F.cross_entropy(logits.transpose(1, 2).float(), labels, reduction="none")
+    
+    logprobs_list = []
+    for i in range(0, seq_len, chunk_size):
+        chunk_logits = logits[:, i:i+chunk_size, :]
+        chunk_labels = labels[:, i:i+chunk_size]
+        chunk_lp = -F.cross_entropy(chunk_logits.transpose(1, 2).float(), chunk_labels, reduction="none")
+        logprobs_list.append(chunk_lp)
+        del chunk_logits, chunk_labels
+    return torch.cat(logprobs_list, dim=1)
 
 
 def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_username, seq_len_scale_factor):
@@ -62,7 +84,7 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
         final_model_path = os.path.join(algo_dir, "final_model")
         repo_name = f"{architecture}_{rl_algo_name}"
         
-        # Skip if this algorithm has already finished training (check for single-file or sharded HF checkpoints)
+        # Skip if this algorithm has already finished training
         is_already_saved = any(
             os.path.exists(os.path.join(final_model_path, fname))
             for fname in ["model.safetensors", "model.safetensors.index.json", "pytorch_model.bin", "pytorch_model.bin.index.json"]
@@ -75,19 +97,17 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
             continue
         del is_already_saved
 
-        # Start Stage Timing for the active algorithm
         stage_key = f"Stage 6: RLVR ({rl_algo_name.upper()})"
         start_t = global_timer.start_stage(stage_key)
 
         log_file = os.path.join(algo_dir, "training_log.jsonl")
 
-        # Robust resumption loop for custom training loop per algorithm
+        # Checkpoint loading
         while True:
             ckpt_dir = get_latest_checkpoint(algo_dir)
             if ckpt_dir:
                 print(f"🔄 Resuming {rl_algo_name.upper()} from checkpoint: {ckpt_dir}")
                 try:
-                    # Optimized model loading
                     model = ModelClass.from_pretrained(
                         ckpt_dir, 
                         config=config,
@@ -135,11 +155,9 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
             ref_model.config.tie_word_embeddings = True
             ref_model.tie_weights()
 
-        # Configure non-reentrant gradient checkpointing and input requirements
         model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
         model.enable_input_require_grads()
         
-        # Free up reference model gradient tracking
         ref_model.requires_grad_(False)
         ref_model.eval()
 
@@ -152,25 +170,22 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
 
         steps_list, variances, entropies, means, losses, flops_list = [], [], [], [], [], []
         tokens_per_sec_list = []
-        tokens_per_sec_buffer = []  # Accumulate tokens per sec for averaging across accumulation steps
+        tokens_per_sec_buffer = []
         vram_allocated_list = []
         vram_reserved_list = []
-        learning_rates = []  # Captured Learning Rate List
-        cot_lengths_list = []  # Captured Step-Averaged CoT Length List
-        cot_lengths_buffer = []  # Accumulate CoT lengths for averaging across accumulation steps
+        learning_rates = []
+        cot_lengths_list = []
+        cot_lengths_buffer = []
         
-        # Next-token prediction confidence
         confidences_list = []
         confidences_buffer = []
 
-        # Rewards metrics
         rewards_list = []
         reward_means = []
         reward_variances = []
         reward_entropies = []
         rewards_buffer = []
 
-        # Advantages metrics
         advantages_list = []
         advantage_means = []
         advantage_variances = []
@@ -210,7 +225,6 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
                     else:
                         del line
 
-        # Set training mode first
         model.train()
         optimizer.zero_grad(set_to_none=True)
         if torch.cuda.is_available():
@@ -222,7 +236,6 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
         del start_step
         for step in step_pbar:
             example = ds[step % len(ds)]
-            
             prompt_text = example["prompt_text"]
             ground_truth = example["ground_truth"]
             del example
@@ -252,8 +265,13 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
             model.train()
             model.config.use_cache = False
             
-            torch.cuda.empty_cache()
-            
+            # --- MEMORY OPTIMIZATION 1: Trim completions to longest active token length ---
+            non_pad_positions = (completions != tokenizer.pad_token_id)
+            actual_max_comp_len = non_pad_positions.sum(dim=1).max().item()
+            actual_max_comp_len = max(actual_max_comp_len, 1)  # Guard against empty sequence
+            completions = completions[:, :actual_max_comp_len]
+            del non_pad_positions
+
             prompt_len = input_ids.size(1)
             decoded_completions = tokenizer.batch_decode(completions, skip_special_tokens=True)
 
@@ -283,7 +301,8 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
             rewards = []
             for comp in decoded_completions:
                 reward = 0.5 if "<think>" in comp and "</think>" in comp else 0.0
-                if ground_truth and str(ground_truth).lower() in comp.lower(): reward += 1.0
+                if ground_truth and str(ground_truth).lower() in comp.lower(): 
+                    reward += 1.0
                 rewards.append(reward)
                 del comp, reward
             del ground_truth, decoded_completions
@@ -297,48 +316,53 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
 
             full_ids = torch.cat([input_ids, completions], dim=1)
             del input_ids
-            full_mask = torch.cat([attention_mask, (completions != tokenizer.pad_token_id).long()], dim=1)
+            comp_mask = (completions != tokenizer.pad_token_id).float()
+            full_mask = torch.cat([attention_mask, comp_mask.long()], dim=1)
             del attention_mask
 
             safe_completions = torch.clamp(completions, min=0, max=vocab_size - 1)
+            del completions
 
-            # 1. Compute reference token logprobs
-            with torch.no_grad():
-                with torch.amp.autocast(device_type="cuda", dtype=dtype):
-                    ref_outputs = ref_model(input_ids=full_ids, attention_mask=full_mask)
-                    ref_logits = ref_outputs.logits[:, prompt_len-1:-1, :].float()
-                    
-                    del ref_outputs
+            torch.cuda.empty_cache()
 
-                    ref_token_logprobs = -F.cross_entropy(
-                        ref_logits.transpose(1, 2), 
-                        safe_completions, 
-                        reduction="none"
-                    )
+            # --- MEMORY OPTIMIZATION 2: Micro-batched and Chunked Reference Logprobs ---
+            ref_logprobs_list = []
+            ref_micro_batch_size = 2  # Feed 2 sequences at a time to keep logits memory tiny
+            for mb_start in range(0, group_size, ref_micro_batch_size):
+                mb_end = mb_start + ref_micro_batch_size
+                mb_full_ids = full_ids[mb_start:mb_end]
+                mb_full_mask = full_mask[mb_start:mb_end]
+                mb_safe_comp = safe_completions[mb_start:mb_end]
 
-            del ref_logits
+                with torch.no_grad():
+                    with torch.amp.autocast(device_type="cuda", dtype=dtype):
+                        ref_outputs = ref_model(input_ids=mb_full_ids, attention_mask=mb_full_mask)
+                        ref_logits_slice = ref_outputs.logits[:, prompt_len-1:-1, :]
+                        del ref_outputs
+                        
+                        mb_ref_lp = compute_token_logprobs_chunked(ref_logits_slice, mb_safe_comp, chunk_size=512)
+                        del ref_logits_slice
+                        ref_logprobs_list.append(mb_ref_lp)
+
+                del mb_full_ids, mb_full_mask, mb_safe_comp
+            
+            ref_token_logprobs = torch.cat(ref_logprobs_list, dim=0)
+            del ref_logprobs_list
+
             gc.collect()
             torch.cuda.empty_cache()
 
-            # 2. Compute policy token logprobs
+            # --- MEMORY OPTIMIZATION 3: Policy Forward and Chunked Logprobs ---
             with torch.amp.autocast(device_type="cuda", dtype=dtype):
                 policy_outputs = model(input_ids=full_ids, attention_mask=full_mask)
                 del full_mask
-                policy_logits = policy_outputs.logits[:, prompt_len-1:-1, :].float()
-                
+                policy_logits = policy_outputs.logits[:, prompt_len-1:-1, :]
                 del policy_outputs, prompt_len
                 
-                policy_token_logprobs = -F.cross_entropy(
-                    policy_logits.transpose(1, 2), 
-                    safe_completions, 
-                    reduction="none"
-                )
+                # Compute token logprobs in chunks to preserve backward gradient graph cleanly
+                policy_token_logprobs = compute_token_logprobs_chunked(policy_logits, safe_completions, chunk_size=512)
                 del policy_logits, safe_completions
 
-                comp_mask = (completions != tokenizer.pad_token_id).float()
-                del completions
-
-                # Calculate model confidence for predicting next token
                 with torch.no_grad():
                     token_probs = torch.exp(policy_token_logprobs.detach())
                     step_confidence = ((token_probs * comp_mask).sum() / (comp_mask.sum() + 1e-8)).item()
@@ -365,11 +389,8 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
             
             N, P = full_ids.size(1) * group_size, sum(p.numel() for p in model.parameters())
             del full_ids
-            total_flops += 8 * N * P + (2 * max_completion_length * group_size * P)
-            del N, P
-
-            gc.collect()
-            torch.cuda.empty_cache()
+            total_flops += 8 * N * P + (2 * actual_max_comp_len * group_size * P)
+            del N, P, actual_max_comp_len
 
             if scaler is not None:
                 scaler.scale(loss).backward()
@@ -438,7 +459,6 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
                 avg_confidence = sum(confidences_buffer) / len(confidences_buffer) if confidences_buffer else 0.0
                 confidences_buffer = []
 
-                # Compute Reward Statistics
                 if rewards_buffer:
                     r_tensor = torch.tensor(rewards_buffer, dtype=torch.float32)
                     r_mean = r_tensor.mean().item()
@@ -455,7 +475,6 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
                     r_mean, r_var, r_entropy = 0.0, 0.0, 0.0
                 rewards_buffer = []
 
-                # Compute Advantage Statistics
                 if advantages_buffer:
                     adv_tensor = torch.tensor(advantages_buffer, dtype=torch.float32)
                     adv_mean = adv_tensor.mean().item()
@@ -575,7 +594,6 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
                 plt.savefig(os.path.join(algo_dir, 'training_metrics.png'))
                 plt.close()
 
-                # Save intermediate training step checkpoints safely
                 ckpt_path = os.path.join(algo_dir, f"checkpoint-{step}")
                 os.makedirs(ckpt_path, exist_ok=True)
                 if hasattr(model, "tie_weights"):
@@ -612,7 +630,6 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
         del advantages_list, advantage_means, advantage_variances, advantage_entropies, advantages_buffer
         del total_flops, vocab_size, log_file
 
-        # Final algorithm save following HF standard serialization
         print(f"💾 Saving final RLVR {rl_algo_name.upper()} model to: {final_model_path}...")
         os.makedirs(final_model_path, exist_ok=True)
         if hasattr(model, "tie_weights"):
