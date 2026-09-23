@@ -31,10 +31,10 @@ def print_main_banner(architecture, hf_username, pretrain_dir, posttrain_dir):
 
 def main(hf_token, architecture, hf_username = "SepehrKerachi"):
 
-    pretrain_dir = f"/content/drive/MyDrive/Simulated/ModelsCheckpoints/{architecture}/Pre-Training"
-    # pretrain_dir = f"/content/drive/MyDrive/Original/ModelsCheckpoints/{architecture}/Pre-Training"
-    posttrain_dir = f"/content/drive/MyDrive/Simulated/ModelsCheckpoints/{architecture}/Post-Training"
-    # posttrain_dir = f"/content/drive/MyDrive/Original/ModelsCheckpoints/{architecture}/Post-Training"
+    # pretrain_dir = f"/content/drive/MyDrive/Simulated/ModelsCheckpoints/{architecture}/Pre-Training"
+    pretrain_dir = f"/content/drive/MyDrive/Original/ModelsCheckpoints/{architecture}/Pre-Training"
+    # posttrain_dir = f"/content/drive/MyDrive/Simulated/ModelsCheckpoints/{architecture}/Post-Training"
+    posttrain_dir = f"/content/drive/MyDrive/Original/ModelsCheckpoints/{architecture}/Post-Training"
 
     print_main_banner(architecture, hf_username, pretrain_dir, posttrain_dir)
 

@@ -48,8 +48,8 @@ def format_dpo_dataset(example):
 
 
 def prepare_pretrain_dataset(phase_path, tokenizer, seq_len):
-    processed_path = f"/content/drive/MyDrive/Simulated/{phase_path}/processed"
-    # processed_path = f"/content/drive/MyDrive/Original/{phase_path}/processed"
+    # processed_path = f"/content/drive/MyDrive/Simulated/{phase_path}/processed"
+    processed_path = f"/content/drive/MyDrive/Original/{phase_path}/processed"
     current_config = {
         "seq_len": seq_len,
         "tokenizer": getattr(tokenizer, "name_or_path", str(tokenizer.__class__))
@@ -60,8 +60,8 @@ def prepare_pretrain_dataset(phase_path, tokenizer, seq_len):
         return cached_ds
 
     dss = []
-    data_dir = f"/content/drive/MyDrive/Simulated/{phase_path}/data"
-    # data_dir = f"/content/drive/MyDrive/Original/{phase_path}/data"
+    # data_dir = f"/content/drive/MyDrive/Simulated/{phase_path}/data"
+    data_dir = f"/content/drive/MyDrive/Original/{phase_path}/data"
 
     if os.path.exists(data_dir):
         shards = [s for s in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, s))]
@@ -95,8 +95,8 @@ def prepare_pretrain_dataset(phase_path, tokenizer, seq_len):
 
 
 def prepare_sft_dataset(dataset_name, tokenizer, seq_len):
-    processed_path = f"/content/drive/MyDrive/Simulated/{dataset_name}/processed"
-    # processed_path = f"/content/drive/MyDrive/Original/{dataset_name}/processed"
+    # processed_path = f"/content/drive/MyDrive/Simulated/{dataset_name}/processed"
+    processed_path = f"/content/drive/MyDrive/Original/{dataset_name}/processed"
     current_config = {
         "seq_len": seq_len,
         "tokenizer": getattr(tokenizer, "name_or_path", str(tokenizer.__class__))
@@ -106,8 +106,8 @@ def prepare_sft_dataset(dataset_name, tokenizer, seq_len):
     if cached_ds is not None:
         return cached_ds
 
-    dataset_source = f"/content/drive/MyDrive/Simulated/{dataset_name}"
-    # dataset_source = f"/content/drive/MyDrive/Original/{dataset_name}"
+    # dataset_source = f"/content/drive/MyDrive/Simulated/{dataset_name}"
+    dataset_source = f"/content/drive/MyDrive/Original/{dataset_name}"
     print(f"📂 Loading SFT dataset from: {dataset_source}...")
     ds = load_dataset(dataset_source, split="train")
     print(f"✓ Loaded {len(ds):,} raw SFT examples.")
@@ -149,16 +149,16 @@ def prepare_sft_dataset(dataset_name, tokenizer, seq_len):
 
 
 def prepare_dpo_dataset(dataset_name):
-    processed_path = f"/content/drive/MyDrive/Simulated/{dataset_name}/processed"
-    # processed_path = f"/content/drive/MyDrive/Original/{dataset_name}/processed"
+    # processed_path = f"/content/drive/MyDrive/Simulated/{dataset_name}/processed"
+    processed_path = f"/content/drive/MyDrive/Original/{dataset_name}/processed"
     current_config = {"format": "dpo_standard"}
     
     cached_ds = check_and_load_cache(processed_path, current_config)
     if cached_ds is not None:
         return cached_ds
 
-    dataset_source = f"/content/drive/MyDrive/Simulated/{dataset_name}"
-    # dataset_source = f"/content/drive/MyDrive/Original/{dataset_name}"
+    # dataset_source = f"/content/drive/MyDrive/Simulated/{dataset_name}"
+    dataset_source = f"/content/drive/MyDrive/Original/{dataset_name}"
     print(f"📂 Loading DPO dataset from: {dataset_source}...")
     ds = load_dataset(dataset_source, split="train")
     print(f"✓ Loaded {len(ds):,} raw preference pairs.")
@@ -172,8 +172,8 @@ def prepare_dpo_dataset(dataset_name):
 
 
 def prepare_rlvr_dataset(dataset_name, tokenizer):
-    processed_path = f"/content/drive/MyDrive/Simulated/{dataset_name}/processed"
-    # processed_path = f"/content/drive/MyDrive/Original/{dataset_name}/processed"
+    # processed_path = f"/content/drive/MyDrive/Simulated/{dataset_name}/processed"
+    processed_path = f"/content/drive/MyDrive/Original/{dataset_name}/processed"
     current_config = {
         "tokenizer": getattr(tokenizer, "name_or_path", str(tokenizer.__class__)),
         "format": "rlvr_extracted"
@@ -183,8 +183,8 @@ def prepare_rlvr_dataset(dataset_name, tokenizer):
     if cached_ds is not None:
         return cached_ds
 
-    dataset_source = f"/content/drive/MyDrive/Simulated/{dataset_name}"
-    # dataset_source = f"/content/drive/MyDrive/Original/{dataset_name}"
+    # dataset_source = f"/content/drive/MyDrive/Simulated/{dataset_name}"
+    dataset_source = f"/content/drive/MyDrive/Original/{dataset_name}"
     print(f"📂 Loading RLVR reasoning dataset from: {dataset_source}...")
     ds = load_dataset(dataset_source, split="train")
     print(f"✓ Loaded {len(ds):,} raw RLVR reasoning examples.")
