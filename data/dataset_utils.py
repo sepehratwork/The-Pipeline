@@ -1,4 +1,5 @@
 import os
+import gc
 import json
 import pandas as pd
 from tqdm import tqdm
@@ -47,6 +48,29 @@ def format_dpo_dataset(example):
     return example
 
 
+def _text_generator(data_dir):
+    """
+    Generator that streams one text at a time directly from compressed files.
+    Keeps only 1 file in memory at any given time.
+    """
+    shards = [s for s in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, s))]
+    for shard in shards:
+        shard_path = os.path.join(data_dir, shard)
+        for file_name in os.listdir(shard_path):
+            file_path = os.path.join(shard_path, file_name)
+            try:
+                # Read single compressed file
+                df = pd.read_json(file_path, lines=True, compression='zstd')
+                if "text" in df.columns:
+                    for text in df["text"].dropna():
+                        if text:  # Filter empty strings
+                            yield {"text": text}
+            except Exception as e:
+                print(f"⚠️ Error reading {file_path}: {e}")
+            finally:
+                del df  # Explicit cleanup per file
+
+
 def prepare_pretrain_dataset(phase_path, tokenizer, seq_len):
     # processed_path = f"/content/drive/MyDrive/Simulated/{phase_path}/processed"
     processed_path = f"/content/drive/MyDrive/Original/{phase_path}/processed"
@@ -59,38 +83,59 @@ def prepare_pretrain_dataset(phase_path, tokenizer, seq_len):
     if cached_ds is not None:
         return cached_ds
 
-    dss = []
     # data_dir = f"/content/drive/MyDrive/Simulated/{phase_path}/data"
     data_dir = f"/content/drive/MyDrive/Original/{phase_path}/data"
 
-    if os.path.exists(data_dir):
-        shards = [s for s in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, s))]
-        print(f"📂 Found {len(shards)} data shards in {data_dir}. Reading compressed JSON lines...")
-        for shard in tqdm(shards, desc="📁 Reading Shards", unit="shard"):
-            shard_path = f"{data_dir}/{shard}"
-            files = os.listdir(shard_path)
-            for j in tqdm(files, desc=f"  └ Shard {shard}", leave=False, unit="file"):
-                file_path = f"{shard_path}/{j}"
-                df = pd.read_json(file_path, lines=True, compression='zstd')
-                df = df.drop(columns=[col for col in df.columns if col != "text"])
-                dss.append(Dataset.from_pandas(df))
-        
-        print("🔗 Concatenating dataset shards...")
-        ds = concatenate_datasets(dss)
-        print(f"✓ Total raw pre-training samples loaded: {len(ds):,}")
-    else:
+    if not os.path.exists(data_dir):
         raise FileNotFoundError(f"Data directory {data_dir} not found.")
 
-    def tokenize_function(examples):
-        return tokenizer(examples["text"], truncation=True, max_length=seq_len, padding="max_length")
+    print(f"📂 Streaming data shards from {data_dir} directly to Arrow table...")
+    
+    # 1. Stream data directly to disk without storing raw DataFrames in RAM
+    # Using local /tmp/hf_cache prevents slow FUSE / Google Drive I/O crashes
+    local_cache_dir = "/tmp/hf_cache"
+    os.makedirs(local_cache_dir, exist_ok=True)
+    
+    ds = Dataset.from_generator(
+        _text_generator, 
+        gen_kwargs={"data_dir": data_dir},
+        cache_dir=local_cache_dir
+    )
+    print(f"✓ Total raw pre-training samples loaded: {len(ds):,}")
 
-    num_proc = os.cpu_count() or 1
-    print(f"⚙️  Tokenizing dataset (seq_len={seq_len}, workers={num_proc})...")
-    tokenized_ds = ds.map(tokenize_function, batched=True, remove_columns=["text"], num_proc=num_proc, desc="Tokenizing pretrain dataset")
-    tokenized_ds = tokenized_ds.map(lambda e: {"labels": e["input_ids"].copy()}, batched=True, num_proc=num_proc, desc="Adding labels")
+    # 2. Tokenize and assign labels in a single pass
+    def tokenize_and_label(examples):
+        outputs = tokenizer(
+            examples["text"],
+            truncation=True,
+            max_length=seq_len,
+            padding="max_length"
+        )
+        # Create labels immediately in memory without a second .map()
+        outputs["labels"] = [ids.copy() for ids in outputs["input_ids"]]
+        return outputs
+
+    # Bound worker count to prevent CPU processes from duplicating memory
+    num_proc = max(1, min(4, (os.cpu_count() or 1)))
+    print(f"⚙️  Tokenizing & labeling dataset (seq_len={seq_len}, workers={num_proc})...")
+    
+    gc.collect()
+
+    tokenized_ds = ds.map(
+        tokenize_and_label,
+        batched=True,
+        batch_size=1000,           # Tokenize in controlled batch sizes
+        writer_batch_size=1000,    # Regularly flushes Arrow buffers from RAM to disk
+        remove_columns=["text"],
+        num_proc=num_proc,
+        desc="Tokenizing & Labeling"
+    )
+
     tokenized_ds.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
     
+    print("💾 Saving cache...")
     save_cache(tokenized_ds, processed_path, current_config)
+    
     return tokenized_ds
 
 
