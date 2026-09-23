@@ -19,23 +19,37 @@ from utils import generate_completions, get_resume_state, get_latest_checkpoint,
 from utils.callbacks import StageTimer
 
 
-def compute_token_logprobs_chunked(logits, labels, chunk_size=512):
+def compute_token_logprobs_chunked(logits, labels, chunk_size=128):
     """
-    Computes token log probabilities in sequence chunks to prevent
-    large VRAM spikes caused by F.cross_entropy on 3D transposed logits.
-    """
-    seq_len = logits.size(1)
-    if seq_len <= chunk_size:
-        return -F.cross_entropy(logits.transpose(1, 2).float(), labels, reduction="none")
+    Computes token log probabilities in flat token chunks without non-contiguous 
+    3D transpositions to eliminate large VRAM spikes.
     
+    Args:
+        logits: [B, S, V] (Bfloat16 or Float16)
+        labels: [B, S] (Long)
+        chunk_size: Number of tokens per cross-entropy chunk (default: 128)
+    """
+    orig_shape = labels.shape  # (B, S)
+    vocab_size = logits.size(-1)
+    
+    # Flatten to 2D view (N, V) - avoids costly 3D transpose memory duplication
+    flat_logits = logits.reshape(-1, vocab_size)
+    flat_labels = labels.reshape(-1)
+    total_tokens = flat_labels.size(0)
+
+    if total_tokens <= chunk_size:
+        chunk_lp = -F.cross_entropy(flat_logits.float(), flat_labels, reduction="none")
+        return chunk_lp.view(orig_shape)
+
     logprobs_list = []
-    for i in range(0, seq_len, chunk_size):
-        chunk_logits = logits[:, i:i+chunk_size, :]
-        chunk_labels = labels[:, i:i+chunk_size]
-        chunk_lp = -F.cross_entropy(chunk_logits.transpose(1, 2).float(), chunk_labels, reduction="none")
+    for i in range(0, total_tokens, chunk_size):
+        chunk_l = flat_logits[i:i + chunk_size]
+        chunk_lab = flat_labels[i:i + chunk_size]
+        # Memory per chunk is only: chunk_size * vocab_size * 4 bytes (~50-65 MB)
+        chunk_lp = -F.cross_entropy(chunk_l.float(), chunk_lab, reduction="none")
         logprobs_list.append(chunk_lp)
-        del chunk_logits, chunk_labels
-    return torch.cat(logprobs_list, dim=1)
+
+    return torch.cat(logprobs_list, dim=0).view(orig_shape)
 
 
 def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_username, seq_len_scale_factor):
@@ -325,9 +339,9 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
 
             torch.cuda.empty_cache()
 
-            # --- MEMORY OPTIMIZATION 2: Micro-batched and Chunked Reference Logprobs ---
+            # --- MEMORY OPTIMIZATION 2: Micro-batched Reference Logprobs ---
             ref_logprobs_list = []
-            ref_micro_batch_size = 2  # Feed 2 sequences at a time to keep logits memory tiny
+            ref_micro_batch_size = 2  # Feed 2 sequences at a time
             for mb_start in range(0, group_size, ref_micro_batch_size):
                 mb_end = mb_start + ref_micro_batch_size
                 mb_full_ids = full_ids[mb_start:mb_end]
@@ -337,10 +351,11 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
                 with torch.no_grad():
                     with torch.amp.autocast(device_type="cuda", dtype=dtype):
                         ref_outputs = ref_model(input_ids=mb_full_ids, attention_mask=mb_full_mask)
-                        ref_logits_slice = ref_outputs.logits[:, prompt_len-1:-1, :]
+                        # .contiguous() breaks the storage link to the prompt logits immediately
+                        ref_logits_slice = ref_outputs.logits[:, prompt_len-1:-1, :].contiguous()
                         del ref_outputs
                         
-                        mb_ref_lp = compute_token_logprobs_chunked(ref_logits_slice, mb_safe_comp, chunk_size=512)
+                        mb_ref_lp = compute_token_logprobs_chunked(ref_logits_slice, mb_safe_comp, chunk_size=128)
                         del ref_logits_slice
                         ref_logprobs_list.append(mb_ref_lp)
 
@@ -352,30 +367,45 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
             gc.collect()
             torch.cuda.empty_cache()
 
-            # --- MEMORY OPTIMIZATION 3: Policy Forward and Chunked Logprobs ---
+            # --- MEMORY OPTIMIZATION 3: Micro-batched Policy Forward Pass ---
+            policy_logprobs_list = []
+            policy_micro_batch_size = 2  # Match micro-batch size to keep activation memory tiny
+            for mb_start in range(0, group_size, policy_micro_batch_size):
+                mb_end = mb_start + policy_micro_batch_size
+                mb_full_ids = full_ids[mb_start:mb_end]
+                mb_full_mask = full_mask[mb_start:mb_end]
+                mb_safe_comp = safe_completions[mb_start:mb_end]
+
+                with torch.amp.autocast(device_type="cuda", dtype=dtype):
+                    mb_policy_outputs = model(input_ids=mb_full_ids, attention_mask=mb_full_mask)
+                    # .contiguous() frees prompt logits memory when mb_policy_outputs is deleted
+                    mb_policy_logits = mb_policy_outputs.logits[:, prompt_len-1:-1, :].contiguous()
+                    del mb_policy_outputs
+                    
+                    mb_policy_lp = compute_token_logprobs_chunked(mb_policy_logits, mb_safe_comp, chunk_size=128)
+                    del mb_policy_logits
+                    policy_logprobs_list.append(mb_policy_lp)
+
+                del mb_full_ids, mb_full_mask, mb_safe_comp
+
+            # Reconstruct the full policy logprobs tensor across the group (preserves autograd graph)
+            policy_token_logprobs = torch.cat(policy_logprobs_list, dim=0)
+            del policy_logprobs_list, safe_completions, full_mask
+
+            with torch.no_grad():
+                token_probs = torch.exp(policy_token_logprobs.detach())
+                step_confidence = ((token_probs * comp_mask).sum() / (comp_mask.sum() + 1e-8)).item()
+                del token_probs
+            confidences_buffer.append(step_confidence)
+            del step_confidence
+
+            loss_kwargs = {}
+            sig = inspect.signature(rl_algo.compute_loss)
+            if "old_logprobs" in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+                loss_kwargs["old_logprobs"] = policy_token_logprobs.detach()
+            del sig
+
             with torch.amp.autocast(device_type="cuda", dtype=dtype):
-                policy_outputs = model(input_ids=full_ids, attention_mask=full_mask)
-                del full_mask
-                policy_logits = policy_outputs.logits[:, prompt_len-1:-1, :]
-                del policy_outputs, prompt_len
-                
-                # Compute token logprobs in chunks to preserve backward gradient graph cleanly
-                policy_token_logprobs = compute_token_logprobs_chunked(policy_logits, safe_completions, chunk_size=512)
-                del policy_logits, safe_completions
-
-                with torch.no_grad():
-                    token_probs = torch.exp(policy_token_logprobs.detach())
-                    step_confidence = ((token_probs * comp_mask).sum() / (comp_mask.sum() + 1e-8)).item()
-                    del token_probs
-                confidences_buffer.append(step_confidence)
-                del step_confidence
-
-                loss_kwargs = {}
-                sig = inspect.signature(rl_algo.compute_loss)
-                if "old_logprobs" in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
-                    loss_kwargs["old_logprobs"] = policy_token_logprobs.detach()
-                del sig
-
                 loss = rl_algo.compute_loss(
                     policy_token_logprobs, 
                     ref_token_logprobs, 
@@ -383,12 +413,12 @@ def run_stage6_rlvr(architecture, tokenizer, base_dir, stage5_model_path, hf_use
                     comp_mask, 
                     **loss_kwargs
                 ) / gradient_accumulation_steps
-                del policy_token_logprobs, ref_token_logprobs, advantages, comp_mask, loss_kwargs
+            del policy_token_logprobs, ref_token_logprobs, advantages, comp_mask, loss_kwargs
             
             loss_val = loss.item() * gradient_accumulation_steps
             
             N, P = full_ids.size(1) * group_size, sum(p.numel() for p in model.parameters())
-            del full_ids
+            del full_ids, prompt_len
             total_flops += 8 * N * P + (2 * actual_max_comp_len * group_size * P)
             del N, P, actual_max_comp_len
 
