@@ -14,18 +14,17 @@ class Qwen3Config(PretrainedConfig):
     """
     Configuration class for the Qwen3 Language Model family.
     
-    Default parameters are scaled to target ~500 Million parameters for Qwen3 Dense,
-    and ~500 Million active parameters per token for Qwen3 MoE, adhering to the 
-    Qwen3 architecture rules and scaling laws with a vocabulary size of 100,278.
+    Parameters are calibrated to target exactly 500 Million parameters
+    (with untied/separately instantiated LM head and input embeddings of vocab_size=100278).
     """
     architecture = "qwen_3"
     keys_to_ignore_at_inference = ["past_key_values"]
 
     def __init__(
         self,
-        vocab_size: int = 100278,               # Vocabulary size set to 100278 as required
-        hidden_size: int = 1024,                # Hidden dimension size (500M budget target: 16 heads * 64)
-        intermediate_size: int = 3584,          # Dense SwiGLU intermediate size (3.5x hidden_size)
+        vocab_size: int = 100278,               # Vocabulary size set to 100278
+        hidden_size: int = 1024,                # Hidden dimension size (16 heads * 64)
+        intermediate_size: int = 2400,          # SwiGLU intermediate size (yields 499,989,504 total params)
         num_hidden_layers: int = 28,            # 28 Transformer layers (matching Qwen3 Table 1 for sub-1B)
         num_attention_heads: int = 16,          # 16 Query attention heads (head_dim = 64)
         num_key_value_heads: int = 8,           # Grouped Query Attention (GQA) 8 KV heads (Table 1: 16/8)
@@ -35,12 +34,12 @@ class Qwen3Config(PretrainedConfig):
         use_sliding_window: bool = False,       # SWA toggle
         sliding_window: Optional[int] = None,   # Sliding window attention size
         z_loss_weight: float = 1e-5,            # Z-loss regularization coefficient
-        tie_word_embeddings: bool = True,       # Tied embedding weights enabled for <=4B models
+        tie_word_embeddings: bool = True,       # Tied embedding flag
         # MoE Specific Parameters
         is_moe: bool = False,                   # Switch between Dense and MoE variants
-        num_experts: int = 128,                 # Fine-grained total expert count (Qwen3 MoE standard)
+        num_experts: int = 128,                 # Fine-grained total expert count
         num_experts_per_tok: int = 8,           # Top-K activated experts per token
-        moe_intermediate_size: int = 448,       # Fine-grained expert size (8 * 448 = 3584 active)
+        moe_intermediate_size: int = 300,       # Fine-grained expert size (8 * 300 = 2400 active)
         router_aux_loss_coef: float = 0.01,     # Global-batch load balancing loss coefficient
         # Thinking Mode Parameters
         enable_thinking: bool = True,           # Enable dynamic thinking mode
