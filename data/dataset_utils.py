@@ -120,7 +120,7 @@ def prepare_pretrain_dataset(phase_path, tokenizer, seq_len):
     )
 
     # Note: Using /tmp for intermediate shard cache avoids Google Drive FUSE write latency
-    local_cache_dir = f"/tmp/shard_cache/{phase_path}"
+    local_cache_dir = f"/content/drive/MyDrive/Original/shard_cache/{phase_path}"
     os.makedirs(local_cache_dir, exist_ok=True)
 
     # Explicit schema prevents schema-inference conflicts across parallel workers
@@ -167,6 +167,7 @@ def prepare_pretrain_dataset(phase_path, tokenizer, seq_len):
 
     print("💾 Saving cache...")
     save_cache(tokenized_ds, processed_path, current_config)
+    os.rmdir(local_cache_dir)
 
     return tokenized_ds
 
