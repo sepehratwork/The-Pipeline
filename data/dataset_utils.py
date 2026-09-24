@@ -3,7 +3,7 @@ import gc
 import json
 import pandas as pd
 from tqdm import tqdm
-from datasets import Dataset, concatenate_datasets, load_dataset, load_from_disk
+from datasets import Dataset, concatenate_datasets, load_dataset, load_from_disk, Features, Value
 
 
 def check_and_load_cache(processed_path, current_config):
@@ -48,26 +48,25 @@ def format_dpo_dataset(example):
     return example
 
 
-def _text_generator(data_dir):
+def _text_generator(file_paths):
     """
-    Generator that streams one text at a time directly from compressed files.
-    Keeps only 1 file in memory at any given time.
+    Generator executed by each CPU worker.
+    Streams texts directly from the slice of compressed files assigned to this process.
+    Keeps only 1 file in memory at any given time per process.
     """
-    shards = [s for s in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, s))]
-    for shard in shards:
-        shard_path = os.path.join(data_dir, shard)
-        for file_name in os.listdir(shard_path):
-            file_path = os.path.join(shard_path, file_name)
-            try:
-                # Read single compressed file
-                df = pd.read_json(file_path, lines=True, compression='zstd')
-                if "text" in df.columns:
-                    for text in df["text"].dropna():
-                        if text:  # Filter empty strings
-                            yield {"text": text}
-            except Exception as e:
-                print(f"⚠️ Error reading {file_path}: {e}")
-            finally:
+    for file_path in file_paths:
+        df = None
+        try:
+            # Read single compressed file
+            df = pd.read_json(file_path, lines=True, compression="zstd")
+            if "text" in df.columns:
+                for text in df["text"].dropna():
+                    if text:  # Filter empty strings
+                        yield {"text": text}
+        except Exception as e:
+            print(f"⚠️ Error reading {file_path}: {e}")
+        finally:
+            if df is not None:
                 del df  # Explicit cleanup per file
 
 
@@ -89,21 +88,47 @@ def prepare_pretrain_dataset(phase_path, tokenizer, seq_len):
     if not os.path.exists(data_dir):
         raise FileNotFoundError(f"Data directory {data_dir} not found.")
 
-    print(f"📂 Streaming data shards from {data_dir} directly to Arrow table...")
+    # 1. Collect all data files across shards
+    all_files = []
+    for root, _, files in os.walk(data_dir):
+        for file_name in files:
+            # Exclude hidden files / metadata
+            if not file_name.startswith("."):
+                all_files.append(os.path.join(root, file_name))
+    all_files.sort()
+
+    if not all_files:
+        raise FileNotFoundError(f"No valid files found in {data_dir}.")
+
+    # 2. Determine worker count & partition files evenly across CPU cores
+    total_cpus = os.cpu_count() or 1
+    num_proc = max(1, min(total_cpus, len(all_files)))
     
-    # 1. Stream data directly to disk without storing raw DataFrames in RAM
-    # Using local /tmp/hf_cache prevents slow FUSE / Google Drive I/O crashes
-    local_cache_dir = "/tmp/hf_cache"
+    # Interleaved / round-robin chunking to balance shard sizes across workers
+    file_chunks = [all_files[i::num_proc] for i in range(num_proc)]
+
+    print(
+        f"📂 Streaming {len(all_files):,} files across {num_proc} CPU cores "
+        f"directly to Arrow table..."
+    )
+
+    local_cache_dir = f"/content/drive/MyDrive/Original/{phase_path}/shard_cache"
     os.makedirs(local_cache_dir, exist_ok=True)
     
+    # 3. Stream data using multiprocessing
+    # Specifying schema explicitly prevents schema-inference conflicts across processes
+    features = Features({"text": Value("string")})
+    
     ds = Dataset.from_generator(
-        _text_generator, 
-        gen_kwargs={"data_dir": data_dir},
+        _text_generator,
+        gen_kwargs={"file_paths": file_chunks},
+        num_proc=num_proc,
+        features=features,
         cache_dir=local_cache_dir
     )
     print(f"✓ Total raw pre-training samples loaded: {len(ds):,}")
 
-    # 2. Tokenize and assign labels in a single pass
+    # 4. Tokenize and assign labels in a single pass
     def tokenize_and_label(examples):
         outputs = tokenizer(
             examples["text"],
@@ -115,8 +140,6 @@ def prepare_pretrain_dataset(phase_path, tokenizer, seq_len):
         outputs["labels"] = [ids.copy() for ids in outputs["input_ids"]]
         return outputs
 
-    # Bound worker count to prevent CPU processes from duplicating memory
-    num_proc = max(1, os.cpu_count())
     print(f"⚙️  Tokenizing & labeling dataset (seq_len={seq_len}, workers={num_proc})...")
     
     gc.collect()
