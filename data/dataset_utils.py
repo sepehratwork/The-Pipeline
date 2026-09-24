@@ -116,7 +116,7 @@ def prepare_pretrain_dataset(phase_path, tokenizer, seq_len):
         return outputs
 
     # Bound worker count to prevent CPU processes from duplicating memory
-    num_proc = max(1, min(4, (os.cpu_count() or 1)))
+    num_proc = max(1, os.cpu_count())
     print(f"⚙️  Tokenizing & labeling dataset (seq_len={seq_len}, workers={num_proc})...")
     
     gc.collect()
@@ -184,7 +184,7 @@ def prepare_sft_dataset(dataset_name, tokenizer, seq_len):
         tokenized["labels"] = tokenized["input_ids"].copy()
         return tokenized
 
-    num_proc = os.cpu_count() or 1
+    num_proc = max(os.cpu_count(), 1)
     print(f"⚙️  Tokenizing SFT conversations (seq_len={seq_len}, workers={num_proc})...")
     tokenized_ds = ds.map(tokenize_function, batched=True, num_proc=num_proc, desc="Tokenizing SFT dataset")
     tokenized_ds.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
@@ -208,7 +208,7 @@ def prepare_dpo_dataset(dataset_name):
     ds = load_dataset(dataset_source, split="train")
     print(f"✓ Loaded {len(ds):,} raw preference pairs.")
 
-    num_proc = os.cpu_count() or 1
+    num_proc = max(os.cpu_count(), 1)
     print(f"⚙️  Formatting preference pairs into prompt/chosen/rejected triplets (workers={num_proc})...")
     formatted_ds = ds.map(format_dpo_dataset, num_proc=num_proc, desc="Formatting DPO dataset")
     
@@ -249,7 +249,7 @@ def prepare_rlvr_dataset(dataset_name, tokenizer):
 
         return {"prompt_text": prompt_text, "ground_truth": ground_truth}
 
-    num_proc = os.cpu_count() or 1
+    num_proc = max(os.cpu_count(), 1)
     print(f"⚙️  Extracting prompt and ground truth reasoning targets (workers={num_proc})...")
     processed_ds = ds.map(extract_fields, num_proc=num_proc, desc="Preparing RLVR dataset")
     
