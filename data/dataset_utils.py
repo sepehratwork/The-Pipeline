@@ -50,61 +50,68 @@ def format_dpo_dataset(example):
 
 def _text_generator(file_paths):
     """
-    Generator executed by each CPU worker.
-    Streams texts directly from the slice of compressed files assigned to this process.
-    Keeps only 1 file in memory at any given time per process.
+    Worker generator that streams one text at a time from assigned files.
+    Robustly flattens any nesting so pd.read_json always receives a string.
     """
-    for file_path in file_paths:
+    # 1. Flatten whatever data structure HF datasets passes to this worker
+    files_to_read = []
+
+    def _flatten(item):
+        if isinstance(item, (list, tuple)):
+            for sub in item:
+                _flatten(sub)
+        elif isinstance(item, str):
+            files_to_read.append(item)
+
+    _flatten(file_paths)
+
+    # 2. Stream individual files one by one per worker process
+    for file_path in files_to_read:
         df = None
         try:
-            # Read single compressed file
             df = pd.read_json(file_path, lines=True, compression="zstd")
             if "text" in df.columns:
                 for text in df["text"].dropna():
-                    if text:  # Filter empty strings
+                    if text:  # Filter out empty strings
                         yield {"text": text}
         except Exception as e:
             print(f"⚠️ Error reading {file_path}: {e}")
         finally:
             if df is not None:
-                del df  # Explicit cleanup per file
+                del df  # Clean up memory immediately per file
 
 
 def prepare_pretrain_dataset(phase_path, tokenizer, seq_len):
-    # processed_path = f"/content/drive/MyDrive/Simulated/{phase_path}/processed"
     processed_path = f"/content/drive/MyDrive/Original/{phase_path}/processed"
     current_config = {
         "seq_len": seq_len,
-        "tokenizer": getattr(tokenizer, "name_or_path", str(tokenizer.__class__))
+        "tokenizer": getattr(tokenizer, "name_or_path", str(tokenizer.__class__)),
     }
-    
+
     cached_ds = check_and_load_cache(processed_path, current_config)
     if cached_ds is not None:
         return cached_ds
 
-    # data_dir = f"/content/drive/MyDrive/Simulated/{phase_path}/data"
     data_dir = f"/content/drive/MyDrive/Original/{phase_path}/data"
-
     if not os.path.exists(data_dir):
         raise FileNotFoundError(f"Data directory {data_dir} not found.")
 
-    # 1. Collect all data files across shards
+    # 1. Collect and sort all files for deterministic sharding
     all_files = []
     for root, _, files in os.walk(data_dir):
         for file_name in files:
-            # Exclude hidden files / metadata
-            if not file_name.startswith("."):
+            if not file_name.startswith("."):  # Ignore hidden/metadata files
                 all_files.append(os.path.join(root, file_name))
     all_files.sort()
 
     if not all_files:
         raise FileNotFoundError(f"No valid files found in {data_dir}.")
 
-    # 2. Determine worker count & partition files evenly across CPU cores
+    # 2. Determine worker count and partition files across all CPU cores
     total_cpus = os.cpu_count() or 1
     num_proc = max(1, min(total_cpus, len(all_files)))
-    
-    # Interleaved / round-robin chunking to balance shard sizes across workers
+
+    # Interleaved round-robin partitioning so each worker gets balanced data
     file_chunks = [all_files[i::num_proc] for i in range(num_proc)]
 
     print(
@@ -112,19 +119,20 @@ def prepare_pretrain_dataset(phase_path, tokenizer, seq_len):
         f"directly to Arrow table..."
     )
 
-    local_cache_dir = f"/content/drive/MyDrive/Original/{phase_path}/shard_cache"
+    # Note: Using /tmp for intermediate shard cache avoids Google Drive FUSE write latency
+    local_cache_dir = f"/tmp/shard_cache/{phase_path}"
     os.makedirs(local_cache_dir, exist_ok=True)
-    
-    # 3. Stream data using multiprocessing
-    # Specifying schema explicitly prevents schema-inference conflicts across processes
+
+    # Explicit schema prevents schema-inference conflicts across parallel workers
     features = Features({"text": Value("string")})
-    
+
+    # 3. Parallel extraction across CPU cores
     ds = Dataset.from_generator(
         _text_generator,
         gen_kwargs={"file_paths": file_chunks},
         num_proc=num_proc,
         features=features,
-        cache_dir=local_cache_dir
+        cache_dir=local_cache_dir,
     )
     print(f"✓ Total raw pre-training samples loaded: {len(ds):,}")
 
@@ -134,31 +142,32 @@ def prepare_pretrain_dataset(phase_path, tokenizer, seq_len):
             examples["text"],
             truncation=True,
             max_length=seq_len,
-            padding="max_length"
+            padding="max_length",
         )
-        # Create labels immediately in memory without a second .map()
         outputs["labels"] = [ids.copy() for ids in outputs["input_ids"]]
         return outputs
 
     print(f"⚙️  Tokenizing & labeling dataset (seq_len={seq_len}, workers={num_proc})...")
-    
+
     gc.collect()
 
     tokenized_ds = ds.map(
         tokenize_and_label,
         batched=True,
-        batch_size=1000,           # Tokenize in controlled batch sizes
-        writer_batch_size=1000,    # Regularly flushes Arrow buffers from RAM to disk
+        batch_size=1000,
+        writer_batch_size=1000,
         remove_columns=["text"],
         num_proc=num_proc,
-        desc="Tokenizing & Labeling"
+        desc="Tokenizing & Labeling",
     )
 
-    tokenized_ds.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
-    
+    tokenized_ds.set_format(
+        type="torch", columns=["input_ids", "attention_mask", "labels"]
+    )
+
     print("💾 Saving cache...")
     save_cache(tokenized_ds, processed_path, current_config)
-    
+
     return tokenized_ds
 
 
