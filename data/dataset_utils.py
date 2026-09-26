@@ -4,6 +4,14 @@ import json
 import pandas as pd
 from tqdm import tqdm
 from datasets import Dataset, concatenate_datasets, load_dataset, load_from_disk, Features, Value
+import glob
+import io
+import multiprocessing as mp
+import shutil
+import pyarrow as pa
+import pyarrow.parquet as pq
+from transformers import AutoTokenizer
+import zstandard as zstd
 
 
 def check_and_load_cache(processed_path, current_config):
@@ -48,128 +56,188 @@ def format_dpo_dataset(example):
     return example
 
 
-def _text_generator(file_paths):
-    """
-    Worker generator that streams one text at a time from assigned files.
-    Robustly flattens any nesting so pd.read_json always receives a string.
-    """
-    # 1. Flatten whatever data structure HF datasets passes to this worker
-    files_to_read = []
+# ---------------------------------------------------------
+# 1. STREAMING FILE PARSER (Zero-RAM decompression)
+# ---------------------------------------------------------
+def _stream_zst_records(file_path):
+    """Streams JSON objects line-by-line from a .zst file without loading it all to RAM."""
+    dctx = zstd.ZstdDecompressor()
+    with open(file_path, "rb") as f:
+        with dctx.stream_reader(f) as reader:
+            text_stream = io.TextIOWrapper(reader, encoding="utf-8")
+            for line in text_stream:
+                line = line.strip()
+                if line:
+                    try:
+                        record = json.loads(line)
+                        if "text" in record and record["text"]:
+                            yield record["text"]
+                    except Exception:
+                        continue
 
-    def _flatten(item):
-        if isinstance(item, (list, tuple)):
-            for sub in item:
-                _flatten(sub)
-        elif isinstance(item, str):
-            files_to_read.append(item)
 
-    _flatten(file_paths)
+# ---------------------------------------------------------
+# 2. WORKER PROCESS (Tokenize & write shards to Google Drive)
+# ---------------------------------------------------------
+def _worker_process_files(
+    worker_id,
+    file_subset,
+    tokenizer_name,
+    seq_len,
+    processed_dir,
+    shard_size_samples=10_000,
+):
+    """Each worker reads assigned files, tokenizes, and writes complete Parquet shards."""
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
 
-    # 2. Stream individual files one by one per worker process
-    for file_path in files_to_read:
-        df = None
+    # Use int32/int8 to cut disk and RAM usage by 50%
+    schema = pa.schema(
+        [
+            ("input_ids", pa.list_(pa.int32())),
+            ("attention_mask", pa.list_(pa.int8())),
+            ("labels", pa.list_(pa.int32())),
+        ]
+    )
+
+    batch_input_ids = []
+    batch_att_mask = []
+    batch_labels = []
+
+    shard_idx = 0
+    local_temp_dir = f"/tmp/worker_{worker_id}"
+    os.makedirs(local_temp_dir, exist_ok=True)
+
+    def _flush_shard():
+        nonlocal shard_idx, batch_input_ids, batch_att_mask, batch_labels
+        if not batch_input_ids:
+            return
+
+        table = pa.Table.from_arrays(
+            [
+                pa.array(batch_input_ids, type=pa.list_(pa.int32())),
+                pa.array(batch_att_mask, type=pa.list_(pa.int8())),
+                pa.array(batch_labels, type=pa.list_(pa.int32())),
+            ],
+            schema=schema,
+        )
+
+        # 1. Write locally to /tmp (fast NVMe, no Drive FUSE overhead)
+        local_file = os.path.join(
+            local_temp_dir, f"shard_{worker_id}_{shard_idx:05d}.parquet"
+        )
+        pq.write_table(table, local_file, compression="zstd")
+
+        # 2. Move atomically to Google Drive
+        dest_file = os.path.join(
+            processed_dir, f"shard_{worker_id}_{shard_idx:05d}.parquet"
+        )
+        shutil.move(local_file, dest_file)
+
+        # Clear batch
+        batch_input_ids.clear()
+        batch_att_mask.clear()
+        batch_labels.clear()
+        del table
+        shard_idx += 1
+
+    for file_path in file_subset:
         try:
-            df = pd.read_json(file_path, lines=True, compression="zstd")
-            if "text" in df.columns:
-                for text in df["text"].dropna():
-                    if text:  # Filter out empty strings
-                        yield {"text": text}
+            for text in _stream_zst_records(file_path):
+                # Tokenize sample
+                encoded = tokenizer(
+                    text,
+                    truncation=True,
+                    max_length=seq_len,
+                    padding="max_length",
+                    return_attention_mask=True,
+                )
+
+                input_ids = encoded["input_ids"]
+                batch_input_ids.append(input_ids)
+                batch_att_mask.append(encoded["attention_mask"])
+                batch_labels.append(input_ids.copy())
+
+                if len(batch_input_ids) >= shard_size_samples:
+                    _flush_shard()
+
         except Exception as e:
-            print(f"⚠️ Error reading {file_path}: {e}")
-        finally:
-            if df is not None:
-                del df  # Clean up memory immediately per file
+            print(f"⚠️ Worker {worker_id} error reading {file_path}: {e}")
+
+    # Flush any remaining samples
+    _flush_shard()
+
+    # Cleanup local worker directory
+    shutil.rmtree(local_temp_dir, ignore_errors=True)
+    gc.collect()
 
 
+# ---------------------------------------------------------
+# 3. MAIN PREPARATION PIPELINE
+# ---------------------------------------------------------
 def prepare_pretrain_dataset(phase_path, tokenizer, seq_len):
-    processed_path = f"/content/drive/MyDrive/Original/{phase_path}/processed"
-    current_config = {
-        "seq_len": seq_len,
-        "tokenizer": getattr(tokenizer, "name_or_path", str(tokenizer.__class__)),
-    }
-
-    cached_ds = check_and_load_cache(processed_path, current_config)
-    if cached_ds is not None:
-        return cached_ds
-
+    processed_dir = f"/content/drive/MyDrive/Original/{phase_path}/processed_parquet"
     data_dir = f"/content/drive/MyDrive/Original/{phase_path}/data"
+
     if not os.path.exists(data_dir):
         raise FileNotFoundError(f"Data directory {data_dir} not found.")
 
-    # 1. Collect and sort all files for deterministic sharding
+    os.makedirs(processed_dir, exist_ok=True)
+
+    # Check if already processed
+    existing_shards = glob.glob(os.path.join(processed_dir, "*.parquet"))
+    if len(existing_shards) > 0:
+        print(
+            f"✓ Found {len(existing_shards):,} existing Parquet shards in {processed_dir}."
+        )
+        print("Skipping preprocessing.")
+        return processed_dir
+
+    # 1. Collect all raw files
     all_files = []
     for root, _, files in os.walk(data_dir):
         for file_name in files:
-            if not file_name.startswith("."):  # Ignore hidden/metadata files
+            if not file_name.startswith("."):
                 all_files.append(os.path.join(root, file_name))
     all_files.sort()
 
     if not all_files:
-        raise FileNotFoundError(f"No valid files found in {data_dir}.")
+        raise FileNotFoundError(f"No valid data files found in {data_dir}.")
 
-    # 2. Determine worker count and partition files across all CPU cores
-    total_cpus = os.cpu_count() or 1
-    num_proc = max(1, min(total_cpus, len(all_files)))
+    tokenizer_name = "OLMo-2-1124-13B"  # adjust if local
 
-    # Interleaved round-robin partitioning so each worker gets balanced data
+    num_proc = max(1, min(os.cpu_count() or 1, len(all_files)))
     file_chunks = [all_files[i::num_proc] for i in range(num_proc)]
 
     print(
-        f"📂 Streaming {len(all_files):,} files across {num_proc} CPU cores "
-        f"directly to Arrow table..."
+        f"📂 Tokenizing & Sharding {len(all_files):,} files directly to Parquet on Google Drive..."
     )
+    print(f"⚙️ Using {num_proc} worker processes. RAM usage will remain constant.")
 
-    # Note: Using /tmp for intermediate shard cache avoids Google Drive FUSE write latency
-    local_cache_dir = f"/content/drive/MyDrive/Original/{phase_path}/shard_cache"
-    os.makedirs(local_cache_dir, exist_ok=True)
-
-    # Explicit schema prevents schema-inference conflicts across parallel workers
-    features = Features({"text": Value("string")})
-
-    # 3. Parallel extraction across CPU cores
-    ds = Dataset.from_generator(
-        _text_generator,
-        gen_kwargs={"file_paths": file_chunks},
-        num_proc=num_proc,
-        features=features,
-        cache_dir=local_cache_dir,
-    )
-    print(f"✓ Total raw pre-training samples loaded: {len(ds):,}")
-
-    # 4. Tokenize and assign labels in a single pass
-    def tokenize_and_label(examples):
-        outputs = tokenizer(
-            examples["text"],
-            truncation=True,
-            max_length=seq_len,
-            padding="max_length",
+    # 2. Run multi-process sharding
+    ctx = mp.get_context("spawn")
+    processes = []
+    for worker_id in range(num_proc):
+        p = ctx.Process(
+            target=_worker_process_files,
+            args=(
+                worker_id,
+                file_chunks[worker_id],
+                tokenizer_name,
+                seq_len,
+                processed_dir,
+                10_000,  # 10,000 samples per shard (~50-100MB per file)
+            ),
         )
-        outputs["labels"] = [ids.copy() for ids in outputs["input_ids"]]
-        return outputs
+        p.start()
+        processes.append(p)
 
-    print(f"⚙️  Tokenizing & labeling dataset (seq_len={seq_len}, workers={num_proc})...")
+    for p in processes:
+        p.join()
 
-    gc.collect()
-
-    tokenized_ds = ds.map(
-        tokenize_and_label,
-        batched=True,
-        batch_size=1000,
-        writer_batch_size=1000,
-        remove_columns=["text"],
-        num_proc=num_proc,
-        desc="Tokenizing & Labeling",
+    print(
+        f"✓ Successfully generated all Parquet shards in: {processed_dir}"
     )
-
-    tokenized_ds.set_format(
-        type="torch", columns=["input_ids", "attention_mask", "labels"]
-    )
-
-    print("💾 Saving cache...")
-    save_cache(tokenized_ds, processed_path, current_config)
-    os.rmdir(local_cache_dir)
-
-    return tokenized_ds
+    return processed_dir
 
 
 def prepare_sft_dataset(dataset_name, tokenizer, seq_len):
