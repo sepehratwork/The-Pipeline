@@ -253,7 +253,7 @@ def prepare_pretrain_dataset(phase_path, tokenizer, seq_len):
                 seq_len,
                 progress_queue,
                 drive_cache_dir,
-                1_000_000,  # Batch size tailored for ~50GB RAM capacity
+                5_000,  # Batch size tailored for ~50GB RAM capacity
             ),
         )
         p.start()
