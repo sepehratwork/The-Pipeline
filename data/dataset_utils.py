@@ -2,66 +2,48 @@ import os
 import gc
 import json
 import glob
+import time
 import shutil
 import tempfile
-import queue
-import traceback
-from pathlib import Path
 import multiprocessing as mp
+from queue import Empty
 import pandas as pd
 from tqdm import tqdm
+import pyarrow as pa
+from transformers import AutoTokenizer, PreTrainedTokenizerBase
+from datasets import (
+    Dataset,
+    concatenate_datasets,
+    load_from_disk,
+    Features,
+    Value,
+    Sequence,
+)
 
-import datasets
-import datasets.config
-from datasets import Dataset, concatenate_datasets, load_from_disk, Features, Value, Sequence, load_dataset
-from datasets.arrow_writer import ArrowWriter
-
-# Prevent tokenizers deadlock when forking worker processes
+# Prevent deadlocks when tokenizing inside multiprocessing workers
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
-def configure_drive_caching(drive_base_path: str):
+def setup_drive_cache_environment(phase_path: str) -> str:
     """
-    Redirects all Hugging Face, Transformers, PyArrow, and OS temporary
-    directories to Google Drive to prevent filling up the Colab local disk.
+    Reroutes all Hugging Face, PyArrow, and system tempfile operations
+    to the mounted Google Drive to prevent filling up the Colab local disk.
     """
-    drive_cache_dir = os.path.join(drive_base_path, "cache")
-    drive_tmp_dir = os.path.join(drive_cache_dir, "tmp")
-    drive_hf_home = os.path.join(drive_cache_dir, "huggingface")
-    drive_hf_datasets = os.path.join(drive_cache_dir, "datasets")
-    drive_hf_transformers = os.path.join(drive_cache_dir, "transformers")
+    drive_cache_dir = f"/content/drive/MyDrive/Original/{phase_path}/cache_tmp"
+    os.makedirs(drive_cache_dir, exist_ok=True)
 
-    for path in [drive_cache_dir, drive_tmp_dir, drive_hf_home, drive_hf_datasets, drive_hf_transformers]:
-        os.makedirs(path, exist_ok=True)
+    # Hugging Face caches
+    os.environ["HF_HOME"] = drive_cache_dir
+    os.environ["HF_DATASETS_CACHE"] = drive_cache_dir
+    os.environ["TRANSFORMERS_CACHE"] = drive_cache_dir
 
-    # Export environment variables for the main process and child subprocesses
-    os.environ["HF_HOME"] = drive_hf_home
-    os.environ["HF_DATASETS_CACHE"] = drive_hf_datasets
-    os.environ["TRANSFORMERS_CACHE"] = drive_hf_transformers
-    os.environ["TMPDIR"] = drive_tmp_dir
-    os.environ["TEMP"] = drive_tmp_dir
-    os.environ["TMP"] = drive_tmp_dir
+    # System temp paths (used by PyArrow and ArrowWriter)
+    os.environ["TMPDIR"] = drive_cache_dir
+    os.environ["TEMP"] = drive_cache_dir
+    os.environ["TMP"] = drive_cache_dir
+    tempfile.tempdir = drive_cache_dir
 
-    # Point Python's internal tempfile directory to Drive
-    tempfile.tempdir = drive_tmp_dir
-
-    # Configure Hugging Face Datasets internal library cache paths
-    datasets.config.HF_DATASETS_CACHE = Path(drive_hf_datasets)
-    datasets.config.DOWNLOADED_DATASETS_PATH = Path(drive_hf_datasets) / "downloads"
-
-    # Symlink ~/.cache/huggingface to Drive as an extra safeguard
-    local_hf_cache = os.path.expanduser("~/.cache/huggingface")
-    try:
-        if os.path.islink(local_hf_cache):
-            os.unlink(local_hf_cache)
-        elif os.path.exists(local_hf_cache):
-            shutil.rmtree(local_hf_cache, ignore_errors=True)
-        os.makedirs(os.path.dirname(local_hf_cache), exist_ok=True)
-        os.symlink(drive_hf_home, local_hf_cache)
-    except Exception as e:
-        print(f"ℹ️  [Cache Setup Note] Could not symlink local cache dir ({e}), using env vars.")
-
-    return drive_tmp_dir, drive_hf_home, drive_hf_datasets, drive_hf_transformers
+    return drive_cache_dir
 
 
 def check_and_load_cache(processed_path, current_config):
@@ -85,7 +67,7 @@ def check_and_load_cache(processed_path, current_config):
     return None
 
 
-def save_cache_metadata(processed_path, current_config, num_shards):
+def save_cache_metadata(processed_path, current_config, num_shards, features):
     """
     Writes standard Hugging Face state.json and cache_config.json directly
     to avoid re-copying hundreds of gigabytes over Google Drive FUSE.
@@ -113,23 +95,20 @@ def _worker_stream_and_tokenize(
     tokenizer,
     seq_len,
     progress_queue,
-    drive_env_paths,
-    batch_size=2048,
+    drive_cache_dir,
+    batch_size=4000,  # Scaled up for 50GB RAM to utilize CPU vectorization
 ):
     """
-    Worker process: reads assigned files in batches, tokenizes them,
-    and writes directly to its own consolidated Arrow file on Google Drive.
+    Worker process: Streams inputs in large batches, tokenizes them,
+    and writes directly to Google Drive while enforcing zero local Colab disk usage.
     """
-    # Enforce Drive cache paths inside child process
-    drive_tmp_dir, drive_hf_home, drive_hf_datasets, drive_hf_transformers = drive_env_paths
-    os.environ["HF_HOME"] = drive_hf_home
-    os.environ["HF_DATASETS_CACHE"] = drive_hf_datasets
-    os.environ["TRANSFORMERS_CACHE"] = drive_hf_transformers
-    os.environ["TMPDIR"] = drive_tmp_dir
-    os.environ["TEMP"] = drive_tmp_dir
-    os.environ["TMP"] = drive_tmp_dir
-    tempfile.tempdir = drive_tmp_dir
-    datasets.config.HF_DATASETS_CACHE = Path(drive_hf_datasets)
+    # Enforce Drive temp directory inside each worker subprocess
+    os.environ["TMPDIR"] = drive_cache_dir
+    os.environ["TEMP"] = drive_cache_dir
+    os.environ["TMP"] = drive_cache_dir
+    tempfile.tempdir = drive_cache_dir
+
+    from datasets.arrow_writer import ArrowWriter
 
     features = Features({
         "input_ids": Sequence(Value("int64")),
@@ -153,19 +132,14 @@ def _worker_stream_and_tokenize(
             padding="max_length",
             return_attention_mask=True,
         )
-        batch_dict = {
+        writer.write_batch({
             "input_ids": outputs["input_ids"],
             "attention_mask": outputs["attention_mask"],
-            "labels": outputs["input_ids"],  # Standard CLM targets
-        }
-        writer.write_batch(batch_dict)
-        num_written = len(batch_dict["input_ids"])
-        if progress_queue is not None:
-            progress_queue.put(("batch", num_written))
+            "labels": outputs["input_ids"],
+        })
 
     try:
         if is_arrow_input:
-            # SCENARIO A: Read from pre-existing shards
             for shard_path in assigned_files:
                 try:
                     ds_shard = Dataset.from_file(shard_path)
@@ -178,11 +152,9 @@ def _worker_stream_and_tokenize(
                 except Exception as e:
                     print(f"⚠️ Worker {worker_id}: Error reading shard {shard_path}: {e}")
                 finally:
-                    if progress_queue is not None:
-                        progress_queue.put(("file_done", 1))
                     gc.collect()
+                    progress_queue.put(1)  # Notify file completion
         else:
-            # SCENARIO B: Stream directly from raw .jsonl.zst files
             buffer = []
             for file_path in assigned_files:
                 df = None
@@ -200,31 +172,22 @@ def _worker_stream_and_tokenize(
                 finally:
                     if df is not None:
                         del df
-                    if progress_queue is not None:
-                        progress_queue.put(("file_done", 1))
                     gc.collect()
+                    progress_queue.put(1)  # Notify file completion
 
             if buffer:
                 _flush_batch(buffer)
 
-    except Exception as e:
-        if progress_queue is not None:
-            progress_queue.put(("worker_error", (worker_id, traceback.format_exc())))
-        raise e
     finally:
         writer.finalize()
-        if progress_queue is not None:
-            progress_queue.put(("worker_done", worker_id))
-        print(f"✓ Worker {worker_id} successfully finalized: {os.path.basename(output_arrow_path)}")
 
 
-def prepare_pretrain_dataset(phase_path, tokenizer, seq_len, batch_size=2048):
-    base_drive_path = f"/content/drive/MyDrive/Original/{phase_path}"
-    processed_path = os.path.join(base_drive_path, "processed")
+def prepare_pretrain_dataset(phase_path, tokenizer, seq_len):
+    # 0. Point all temporary directories and HF caches to Google Drive
+    drive_cache_dir = setup_drive_cache_environment(phase_path)
+
+    processed_path = f"/content/drive/MyDrive/Original/{phase_path}/processed"
     os.makedirs(processed_path, exist_ok=True)
-
-    # Configure all caching and temp storage strictly to Google Drive
-    drive_env_paths = configure_drive_caching(base_drive_path)
 
     current_config = {
         "seq_len": seq_len,
@@ -238,8 +201,8 @@ def prepare_pretrain_dataset(phase_path, tokenizer, seq_len, batch_size=2048):
 
     print(f"ℹ️  [Cache Miss] No valid cache found at {processed_path}. Preparing dataset...")
 
-    # 2. Check if the existing shards exist from previous steps
-    shard_cache_dir = os.path.join(base_drive_path, "shard_cache")
+    # 2. Check for intermediate arrow shards
+    shard_cache_dir = f"/content/drive/MyDrive/Original/{phase_path}/shard_cache"
     existing_arrow_shards = []
     if os.path.exists(shard_cache_dir):
         existing_arrow_shards = sorted(glob.glob(os.path.join(shard_cache_dir, "*.arrow")))
@@ -247,10 +210,9 @@ def prepare_pretrain_dataset(phase_path, tokenizer, seq_len, batch_size=2048):
     is_arrow_input = len(existing_arrow_shards) > 0
     if is_arrow_input:
         print(f"⚡ Detected {len(existing_arrow_shards):,} existing raw shards in {shard_cache_dir}.")
-        print("   Directly tokenizing from existing shards to save hours of re-extraction!")
         files_to_process = existing_arrow_shards
     else:
-        data_dir = os.path.join(base_drive_path, "data")
+        data_dir = f"/content/drive/MyDrive/Original/{phase_path}/data"
         if not os.path.exists(data_dir):
             raise FileNotFoundError(f"Neither shard_cache nor data directory {data_dir} found.")
 
@@ -265,24 +227,22 @@ def prepare_pretrain_dataset(phase_path, tokenizer, seq_len, batch_size=2048):
             raise FileNotFoundError(f"No valid files found in {data_dir}.")
         print(f"📂 Streaming {len(files_to_process):,} raw files directly into tokenized Arrow shards...")
 
-    # 3. Utilize full hardware: 8 CPU cores & distributed batches for 50GB RAM
+    # 3. Utilize all 8 CPU cores & partition workloads evenly
     total_cpus = os.cpu_count() or 8
-    num_proc = min(8, total_cpus, len(files_to_process))
+    num_proc = max(1, min(total_cpus, len(files_to_process)))
 
-    # Interleaved round-robin partitioning for balanced worker load
     file_chunks = [files_to_process[i::num_proc] for i in range(num_proc)]
-
-    # Consolidated destination paths: 1 Arrow file per worker
     output_arrow_paths = [
         os.path.join(processed_path, f"data-{i:05d}-of-{num_proc:05d}.arrow")
         for i in range(num_proc)
     ]
 
-    print(f"⚙️  Spawning {num_proc} workers (utilizing 8 cores & 50GB RAM capacity)...")
+    print(f"⚙️  Spawning {num_proc} workers across 8 CPUs and 50GB RAM (Temp Dir: {drive_cache_dir})...")
 
-    # 4. Multiprocessing execution with isolated process memory & real-time progress bar
+    # 4. Multiprocessing execution with isolated process memory and live progress bar
     progress_queue = mp.Queue()
     processes = []
+
     for worker_id in range(num_proc):
         p = mp.Process(
             target=_worker_stream_and_tokenize,
@@ -294,42 +254,45 @@ def prepare_pretrain_dataset(phase_path, tokenizer, seq_len, batch_size=2048):
                 tokenizer,
                 seq_len,
                 progress_queue,
-                drive_env_paths,
-                batch_size,
+                drive_cache_dir,
+                4000,  # Batch size tailored for ~50GB RAM capacity
             ),
         )
         p.start()
         processes.append(p)
 
-    # Real-time multi-worker progress tracking
-    total_files = len(files_to_process)
-    total_tokenized_samples = 0
-    active_workers = num_proc
-
+    # Progress bar monitoring in the parent process
     with tqdm(
-        total=total_files,
-        desc="🚀 Tokenizing & Sharding (Step 4)",
+        total=len(files_to_process),
+        desc="🚀 Tokenizing & Sharding to Drive",
         unit="file",
         dynamic_ncols=True,
     ) as pbar:
-        while active_workers > 0:
+        completed = 0
+        while completed < len(files_to_process):
+            # Check if any worker failed unexpectedly
+            for p in processes:
+                if not p.is_alive() and p.exitcode not in (0, None):
+                    raise RuntimeError(f"Worker process failed with exit code {p.exitcode}")
+
             try:
-                msg_type, val = progress_queue.get(timeout=0.2)
-                if msg_type == "batch":
-                    total_tokenized_samples += val
-                    pbar.set_postfix({"tokenized_samples": f"{total_tokenized_samples:,}"})
-                elif msg_type == "file_done":
-                    pbar.update(val)
-                elif msg_type == "worker_done":
-                    active_workers -= 1
-                elif msg_type == "worker_error":
-                    w_id, err_trace = val
-                    print(f"\n❌ Worker {w_id} encountered an error:\n{err_trace}")
-            except queue.Empty:
-                # Check for crashed workers
-                for i, p in enumerate(processes):
-                    if not p.is_alive() and p.exitcode not in (0, None):
-                        raise RuntimeError(f"Worker {i} exited unexpectedly with code {p.exitcode}")
+                # Poll queue for processed file signals
+                updates = 0
+                while True:
+                    progress_queue.get_nowait()
+                    updates += 1
+            except Empty:
+                pass
+
+            if updates > 0:
+                completed += updates
+                pbar.update(updates)
+
+            # Check if all processes ended
+            if not any(p.is_alive()) and progress_queue.empty():
+                break
+
+            time.sleep(0.5)
 
     for p in processes:
         p.join()
@@ -351,18 +314,22 @@ def prepare_pretrain_dataset(phase_path, tokenizer, seq_len, batch_size=2048):
         "labels": Sequence(Value("int64")),
     })
 
-    # 6. Save metadata and configs so check_and_load_cache works instantly next time
-    save_cache_metadata(processed_path, current_config, len(valid_shards))
+    # 6. Save metadata and configs
+    save_cache_metadata(processed_path, current_config, len(valid_shards), features)
     tokenized_ds.info.features = features
     tokenized_ds.info.write_to_directory(processed_path)
 
     tokenized_ds.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
     print(f"✓ Dataset ready with {len(tokenized_ds):,} tokenized sequences.")
 
-    # 7. Cleanup old temporary raw shards to recover Google Drive storage
+    # 7. Cleanup intermediate directories & temporary Drive cache
     if is_arrow_input and os.path.exists(shard_cache_dir):
         print(f"🧹 Cleaning up intermediate raw shard directory: {shard_cache_dir}...")
         shutil.rmtree(shard_cache_dir, ignore_errors=True)
+
+    if os.path.exists(drive_cache_dir):
+        print(f"🧹 Cleaning up temporary Drive scratchpad: {drive_cache_dir}...")
+        shutil.rmtree(drive_cache_dir, ignore_errors=True)
 
     gc.collect()
     return tokenized_ds
