@@ -13,7 +13,7 @@ from tqdm import tqdm
 
 import datasets
 import datasets.config
-from datasets import Dataset, concatenate_datasets, load_from_disk, Features, Value, Sequence
+from datasets import Dataset, concatenate_datasets, load_from_disk, Features, Value, Sequence, load_dataset
 from datasets.arrow_writer import ArrowWriter
 
 # Prevent tokenizers deadlock when forking worker processes
@@ -85,7 +85,7 @@ def check_and_load_cache(processed_path, current_config):
     return None
 
 
-def save_cache_metadata(processed_path, current_config, num_shards, features):
+def save_cache_metadata(processed_path, current_config, num_shards):
     """
     Writes standard Hugging Face state.json and cache_config.json directly
     to avoid re-copying hundreds of gigabytes over Google Drive FUSE.
@@ -352,7 +352,7 @@ def prepare_pretrain_dataset(phase_path, tokenizer, seq_len, batch_size=2048):
     })
 
     # 6. Save metadata and configs so check_and_load_cache works instantly next time
-    save_cache_metadata(processed_path, current_config, len(valid_shards), features)
+    save_cache_metadata(processed_path, current_config, len(valid_shards))
     tokenized_ds.info.features = features
     tokenized_ds.info.write_to_directory(processed_path)
 
@@ -418,7 +418,7 @@ def prepare_sft_dataset(dataset_name, tokenizer, seq_len):
     tokenized_ds = ds.map(tokenize_function, batched=True, num_proc=num_proc, desc="Tokenizing SFT dataset")
     tokenized_ds.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
     
-    save_cache(tokenized_ds, processed_path, current_config)
+    save_cache_metadata(tokenized_ds, processed_path, current_config)
     return tokenized_ds
 
 
@@ -453,7 +453,7 @@ def prepare_dpo_dataset(dataset_name):
     print(f"⚙️  Formatting preference pairs into prompt/chosen/rejected triplets (workers={num_proc})...")
     formatted_ds = ds.map(format_dpo_dataset, num_proc=num_proc, desc="Formatting DPO dataset")
     
-    save_cache(formatted_ds, processed_path, current_config)
+    save_cache_metadata(formatted_ds, processed_path, current_config)
     return formatted_ds
 
 
@@ -494,5 +494,5 @@ def prepare_rlvr_dataset(dataset_name, tokenizer):
     print(f"⚙️  Extracting prompt and ground truth reasoning targets (workers={num_proc})...")
     processed_ds = ds.map(extract_fields, num_proc=num_proc, desc="Preparing RLVR dataset")
     
-    save_cache(processed_ds, processed_path, current_config)
+    save_cache_metadata(processed_ds, processed_path, current_config)
     return processed_ds

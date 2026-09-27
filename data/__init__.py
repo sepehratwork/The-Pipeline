@@ -1,1 +1,1 @@
-from .dataset_utils import check_and_load_cache, save_cache, prepare_pretrain_dataset, prepare_sft_dataset, format_dpo_dataset, prepare_dpo_dataset, prepare_rlvr_dataset
+from .dataset_utils import check_and_load_cache, save_cache_metadata, prepare_pretrain_dataset, prepare_sft_dataset, format_dpo_dataset, prepare_dpo_dataset, prepare_rlvr_dataset
