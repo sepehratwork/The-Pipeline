@@ -9,8 +9,6 @@ import multiprocessing as mp
 from queue import Empty
 import pandas as pd
 from tqdm import tqdm
-import pyarrow as pa
-from transformers import AutoTokenizer, PreTrainedTokenizerBase
 from datasets import (
     Dataset,
     concatenate_datasets,
@@ -271,33 +269,40 @@ def prepare_pretrain_dataset(phase_path, tokenizer, seq_len):
         completed = 0
         while completed < len(files_to_process):
             # Check if any worker failed unexpectedly
-            for p in processes:
-                if not p.is_alive() and p.exitcode not in (0, None):
-                    raise RuntimeError(f"Worker process failed with exit code {p.exitcode}")
+            for proc in processes:
+                if not proc.is_alive() and proc.exitcode not in (0, None):
+                    raise RuntimeError(f"Worker process failed with exit code {proc.exitcode}")
 
-            try:
-                # Poll queue for processed file signals
-                updates = 0
-                while True:
+            # Drain queue for completed file updates
+            updates = 0
+            while True:
+                try:
                     progress_queue.get_nowait()
                     updates += 1
-            except Empty:
-                pass
+                except Empty:
+                    break
 
             if updates > 0:
                 completed += updates
                 pbar.update(updates)
 
-            # Check if all processes ended
-            if not any(p.is_alive()) and progress_queue.empty():
+            # Check if all processes have finished running
+            if not any(proc.is_alive() for proc in processes):
+                # Drain remaining signals from queue before terminating
+                while True:
+                    try:
+                        progress_queue.get_nowait()
+                        pbar.update(1)
+                    except Empty:
+                        break
                 break
 
             time.sleep(0.5)
 
-    for p in processes:
-        p.join()
-        if p.exitcode != 0:
-            raise RuntimeError(f"Worker process failed with exit code {p.exitcode}")
+    for proc in processes:
+        proc.join()
+        if proc.exitcode != 0:
+            raise RuntimeError(f"Worker process failed with exit code {proc.exitcode}")
 
     # 5. Build and verify the consolidated Hugging Face Dataset
     print("🔗 Linking consolidated shards into memory-mapped Hugging Face Dataset...")
